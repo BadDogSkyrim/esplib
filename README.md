@@ -6,6 +6,8 @@ Built as a Python alternative to xEdit scripting for automating plugin operation
 like the [Furrifier](https://www.nexusmods.com/skyrimspecialedition/mods/35138)
 mod conversion suite.
 
+Primary credit for this work goes to ElminsterAU and the xEdit folks. This was built on their work over decades (pretty sure it's been decades) understanding the Bethesda plugin format.
+
 ## Features
 
 - Load, inspect, modify, and save Bethesda plugin files
