@@ -457,13 +457,22 @@ class Record:
         self.modified = True
 
     def bind_schema(self, schema) -> None:
-        """Bind a schema and restructure flat subrecords into children."""
+        """Bind a schema definition to this record.
+
+        Children are built lazily on first access (get_group or modify+save),
+        so binding is cheap.
+        """
         self.schema = schema
         self._resolved_cache.clear()
-        if schema is not None:
-            self.children = _restructure(self.subrecords, schema.members)
-        else:
-            self.children = None
+        self.children = None
+
+    def _ensure_children(self) -> List:
+        """Build the children structure from subrecords if not yet done."""
+        if self.children is None:
+            if self.schema is None:
+                raise ValueError("No schema bound -- call bind_schema() first")
+            self.children = _restructure(self.subrecords, self.schema.members)
+        return self.children
 
     def get_group(self, name: str) -> list:
         """Get the live list of GroupInstances for a named group.
@@ -471,8 +480,7 @@ class Record:
         Returns the actual list -- append, reorder, delete directly.
         Create new instances with GroupInstance.new(group_def).
         """
-        if self.children is None:
-            raise ValueError("No schema bound -- call bind_schema() first")
+        self._ensure_children()
         for child in self.children:
             if isinstance(child, list) and child and isinstance(child[0], GroupInstance):
                 if child[0].name == name:
@@ -489,15 +497,16 @@ class Record:
         raise KeyError(f"No group named {name!r} in schema")
 
     def _flatten_children(self) -> List[SubRecord]:
-        """Flatten children back to a sorted list of SubRecords for serialization."""
-        if self.children is None:
-            if self.schema is not None:
-                # Schema set but children not built (programmatic record).
-                # Restructure on the fly for sorting.
-                children = _restructure(self.subrecords, self.schema.members)
-                return _sort_and_flatten(children, self.schema.members)
+        """Flatten children back to a sorted list of SubRecords for serialization.
+
+        Only sort when the record has been modified. Unmodified records
+        preserve original disk order for byte-perfect round-trips.
+        """
+        if not self.modified:
             return self.subrecords
-        return _sort_and_flatten(self.children, self.schema.members)
+        if self.schema is not None:
+            return _sort_and_flatten(self._ensure_children(), self.schema.members)
+        return self.subrecords
 
     def _serialize_subrecords(self) -> bytes:
         """Serialize all subrecords to bytes (handles XXXX overflow).
