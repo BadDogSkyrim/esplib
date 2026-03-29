@@ -222,14 +222,8 @@ class TestSkyrimAccess:
     """Test typed access against real Skyrim.esm records."""
 
     @pytest.fixture(scope='class')
-    def skyrim(self):
-        esm_path = find_skyrim_esm()
-        if not esm_path:
-            pytest.skip("Skyrim.esm not found")
-        plugin = Plugin(esm_path)
-        import esplib.defs.tes5
-        plugin.set_game('tes5')
-        return plugin
+    def skyrim(self, skyrim_plugin):
+        return skyrim_plugin
 
     @pytest.mark.gamefiles
     @pytest.mark.slow

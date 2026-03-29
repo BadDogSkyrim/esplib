@@ -271,6 +271,8 @@ class Record:
         self.schema = None  # Optional[EspRecord] -- set externally
         # Cache for resolved subrecord values
         self._resolved_cache: dict = {}
+        # Back-reference to owning Plugin (set by Plugin._link_records)
+        self._plugin = None
 
     @property
     def is_compressed(self) -> bool:
@@ -291,18 +293,21 @@ class Record:
 
     @property
     def full_name(self) -> Optional[str]:
-        """Get full name. Returns None if not present.
-        Note: for localized plugins, FULL contains a uint32 string table ID.
-        Use get_localized_string_id() to get the ID instead.
+        """Get full name from FULL subrecord.
+
+        For localized plugins, resolves the string table ID automatically
+        if the record has a back-reference to its Plugin.
         """
         full = self.get_subrecord("FULL")
         if not full:
             return None
-        # If the data is exactly 4 bytes, it might be a localized string ID.
-        # We can't tell without knowing if the plugin is localized, so we
-        # return the raw lstring interpretation here. The Plugin class
-        # handles localization-aware access.
-        return full.get_lstring()
+        if full.size == 4 and self._plugin and self._plugin.is_localized:
+            string_id = full.get_uint32()
+            resolved = self._plugin.resolve_string(string_id)
+            if resolved is not None:
+                return resolved
+            return None
+        return full.get_string()
 
     @full_name.setter
     def full_name(self, value: str) -> None:

@@ -183,13 +183,18 @@ class StringTableManager:
         self.dlstrings: Optional[StringTable] = None     # .DLSTRINGS
         self.ilstrings: Optional[StringTable] = None     # .ILSTRINGS
 
-    def load_for_plugin(self, plugin_path: Path, language: str = 'english') -> None:
+    def load_for_plugin(self, plugin_path: Path, language: str = 'english',
+                        search_dirs: Optional[list] = None) -> None:
         """Load string tables for a plugin.
-        Expects files like: Skyrim_english.STRINGS in the Strings/ subdirectory.
+
+        Searches for files like Skyrim_english.STRINGS in:
+        1. The Strings/ subdirectory next to the plugin
+        2. Any additional directories in search_dirs
         """
-        data_dir = plugin_path.parent
-        strings_dir = data_dir / 'Strings'
         plugin_name = plugin_path.stem
+        dirs = [plugin_path.parent / 'Strings']
+        if search_dirs:
+            dirs.extend(Path(d) for d in search_dirs)
 
         for table_type, attr in [
             (StringTable.STRINGS, 'strings'),
@@ -197,9 +202,11 @@ class StringTableManager:
             (StringTable.ILSTRINGS, 'ilstrings'),
         ]:
             filename = f"{plugin_name}_{language}.{table_type}"
-            filepath = strings_dir / filename
-            if filepath.exists():
-                setattr(self, attr, StringTable.from_file(filepath, table_type))
+            for d in dirs:
+                filepath = d / filename
+                if filepath.exists():
+                    setattr(self, attr, StringTable.from_file(filepath, table_type))
+                    break
 
     def get_string(self, string_id: int) -> Optional[str]:
         """Look up a string ID across all loaded tables."""

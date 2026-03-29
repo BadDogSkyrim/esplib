@@ -287,11 +287,8 @@ class TestSkyrimFieldValues:
     """Validate specific field values from Skyrim.esm records."""
 
     @pytest.fixture(scope='class')
-    def skyrim(self):
-        esm_path = find_skyrim_esm()
-        if not esm_path:
-            pytest.skip("Skyrim.esm not found")
-        return Plugin(esm_path)
+    def skyrim(self, skyrim_plugin):
+        return skyrim_plugin
 
     @pytest.mark.gamefiles
     @pytest.mark.slow

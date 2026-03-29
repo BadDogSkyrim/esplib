@@ -142,6 +142,8 @@ class Plugin:
         self.load_order: int = -1
         self.modified = False
         self._game_registry = None
+        self.string_tables = None  # Optional[StringTableManager]
+        self.string_search_dirs: list = []  # Additional dirs to search for .STRINGS files
 
         # Indexes for fast lookups
         self._form_id_index: Dict[int, Record] = {}
@@ -163,6 +165,8 @@ class Plugin:
 
         reader = BinaryReader(data)
         self._parse_plugin(reader)
+        self._link_records()
+        self._load_string_tables()
         self._build_indexes()
         self.modified = False
         self.auto_detect_game()
@@ -200,6 +204,28 @@ class Plugin:
                 self.records.append(item)
             else:
                 self._collect_records_from_group(item)
+
+    def _link_records(self) -> None:
+        """Set back-references so records can resolve localized strings."""
+        for record in self.records:
+            record._plugin = self
+
+    def _load_string_tables(self) -> None:
+        """Load string tables if the plugin is localized."""
+        if not self.header.is_localized or not self.file_path:
+            return
+        from .strings import StringTableManager
+        mgr = StringTableManager()
+        mgr.load_for_plugin(self.file_path,
+                            search_dirs=self.string_search_dirs)
+        if mgr.strings or mgr.dlstrings or mgr.ilstrings:
+            self.string_tables = mgr
+
+    def resolve_string(self, string_id: int) -> Optional[str]:
+        """Resolve a localized string ID to its text."""
+        if self.string_tables:
+            return self.string_tables.get_string(string_id)
+        return None
 
     def _build_indexes(self) -> None:
         self._form_id_index.clear()
@@ -370,19 +396,74 @@ class Plugin:
         if source_plugin.file_path:
             self.add_master(source_plugin.file_path.name)
 
+    def remap_formid(self, form_id: int,
+                     source_plugin: 'Plugin') -> int:
+        """Remap a FormID from a source plugin's master list to this plugin's.
+
+        The high byte of a FormID is the master index. This translates it
+        from the source's master ordering to the destination's.
+        """
+        master_idx = (form_id >> 24) & 0xFF
+        obj_id = form_id & 0x00FFFFFF
+
+        # Determine the master name in the source
+        src_masters = source_plugin.header.masters
+        if master_idx < len(src_masters):
+            master_name = src_masters[master_idx]
+        elif source_plugin.file_path:
+            # Index == len(masters) means the source file itself
+            master_name = source_plugin.file_path.name
+        else:
+            return form_id  # Can't remap
+
+        # Find that master's index in our master list
+        for i, m in enumerate(self.header.masters):
+            if m.lower() == master_name.lower():
+                return (i << 24) | obj_id
+
+        # Not found — shouldn't happen if add_recursive_masters was called
+        return form_id
+
+    # Subrecord signatures that contain localized string IDs
+    _LOCALIZED_STRING_SIGS = {'FULL', 'SHRT', 'DESC', 'NNAM', 'ITXT'}
+
     def copy_record(self, record: 'Record',
                     source_plugin: Optional['Plugin'] = None) -> 'Record':
         """Deep-copy a record into this plugin.
 
-        If source_plugin is provided, automatically adds required masters.
+        If source_plugin is provided (or the record has a _plugin
+        back-reference), automatically adds required masters.
+
+        When copying from a localized plugin into a non-localized one,
+        resolves string table IDs to inline null-terminated strings.
+
         Returns the new record.
         """
-        if source_plugin:
-            self.add_recursive_masters(source_plugin)
+        source = source_plugin or getattr(record, '_plugin', None)
+        if source:
+            self.add_recursive_masters(source)
 
         new_record = record.copy()
+
+        if (source and source.is_localized
+                and not self.is_localized
+                and source.string_tables):
+            self._delocalize_strings(new_record, source)
+
         self.add_record(new_record)
         return new_record
+
+    def _delocalize_strings(self, record: 'Record',
+                            source: 'Plugin') -> None:
+        """Convert localized string IDs to inline strings."""
+        for sr in record.subrecords:
+            if sr.signature in self._LOCALIZED_STRING_SIGS and sr.size == 4:
+                string_id = sr.get_uint32()
+                resolved = source.resolve_string(string_id)
+                if resolved is not None:
+                    sr.data = bytearray(
+                        resolved.encode('cp1252', errors='replace') + b'\x00')
+                    sr.modified = True
 
     def get_next_form_id(self) -> FormID:
         max_object_id = self.header.next_object_id - 1

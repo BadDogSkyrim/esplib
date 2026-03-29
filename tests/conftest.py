@@ -42,6 +42,45 @@ def find_game_file(name: str) -> Path | None:
     return None
 
 
+STRING_TABLE_PATHS = [
+    Path(r"C:\Modding\SkyrimSEAssets\00 Vanilla Assets\strings"),
+]
+
+
+def find_strings_dir() -> Path | None:
+    """Find directory containing Skyrim_english.STRINGS."""
+    data = find_skyrim_data()
+    if data:
+        d = data / "Strings"
+        if (d / "Skyrim_english.STRINGS").exists():
+            return d
+    for p in STRING_TABLE_PATHS:
+        if p.exists():
+            for f in p.iterdir():
+                if f.name.lower() == "skyrim_english.strings":
+                    return p
+    return None
+
+
+@pytest.fixture(scope="session")
+def skyrim_plugin():
+    """Skyrim.esm loaded once per session.
+
+    When running from the workspace root, the root conftest provides this
+    fixture instead (shared across esplib and furrifier tests).
+    """
+    from esplib import Plugin
+    esm_path = find_skyrim_esm()
+    if not esm_path:
+        pytest.skip("Skyrim.esm not found")
+    strings_dir = find_strings_dir()
+    p = Plugin()
+    if strings_dir:
+        p.string_search_dirs = [str(strings_dir)]
+    p.load(esm_path)
+    return p
+
+
 # --- Binary helpers for building synthetic plugin data ---
 
 def make_subrecord(sig: str, data: bytes) -> bytes:

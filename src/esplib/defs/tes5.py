@@ -988,7 +988,9 @@ NPC_ = EspRecord.new('NPC_', 'Non-Player Character', [
         EspInteger.new('health_offset', IntType.S16),
         EspInteger.new('bleedout_override', IntType.U16),
     ])),
-    common.FULL,
+    # Factions (repeating)
+    EspSubRecord.new('SNAM', 'Faction', EspByteArray.new('faction')),
+    # Death item
     EspSubRecord.new('INAM', 'Death Item',
                      EspFormID.new('death_item', ['LVLI'])),
     EspSubRecord.new('VTCK', 'Voice Type',
@@ -997,14 +999,33 @@ NPC_ = EspRecord.new('NPC_', 'Non-Player Character', [
                      EspFormID.new('template', ['LVLN', 'NPC_'])),
     EspSubRecord.new('RNAM', 'Race',
                      EspFormID.new('race', ['RACE'])),
+    # Spells
     EspSubRecord.new('SPCT', 'Spell Count',
                      EspInteger.new('count', IntType.U32)),
     EspSubRecord.new('SPLO', 'Actor Effect',
                      EspFormID.new('spell', ['SPEL', 'SHOU', 'LVSP'])),
-    EspSubRecord.new('WNAM', 'Worn Armor',
-                     EspFormID.new('worn_armor', ['ARMO'])),
-    EspSubRecord.new('ANAM', 'Far Away Model',
-                     EspFormID.new('far_model', ['ARMO'])),
+    # Perks
+    EspSubRecord.new('PRKZ', 'Perk Count',
+                     EspInteger.new('count', IntType.U32)),
+    EspSubRecord.new('PRKR', 'Perk',
+                     EspByteArray.new('perk')),
+    # Attack data
+    EspSubRecord.new('ATKR', 'Attack Race',
+                     EspFormID.new('attack_race', ['RACE'])),
+    # Inventory
+    EspSubRecord.new('COCT', 'Item Count',
+                     EspInteger.new('count', IntType.U32)),
+    EspSubRecord.new('CNTO', 'Item', EspByteArray.new('item')),
+    # AI data
+    EspSubRecord.new('AIDT', 'AI Data', EspByteArray.new('ai_data')),
+    # Packages (repeating)
+    EspSubRecord.new('PKID', 'Package',
+                     EspFormID.new('package', ['PACK'])),
+    EspSubRecord.new('CNAM', 'Class',
+                     EspFormID.new('class_', ['CLAS'])),
+    common.FULL,
+    EspSubRecord.new('SHRT', 'Short Name', EspByteArray.new('short_name')),
+    EspSubRecord.new('DATA', 'Marker', EspByteArray.new('data_marker')),
     EspSubRecord.new('DNAM', 'Player Skills', EspStruct.new('skills', [
         EspInteger.new('one_handed_value', IntType.U8),
         EspInteger.new('two_handed_value', IntType.U8),
@@ -1048,24 +1069,51 @@ NPC_ = EspRecord.new('NPC_', 'Non-Player Character', [
     ])),
     common.KSIZ,
     common.KWDA,
-    EspSubRecord.new('CNAM', 'Class',
-                     EspFormID.new('class_', ['CLAS'])),
+    EspSubRecord.new('WNAM', 'Worn Armor',
+                     EspFormID.new('worn_armor', ['ARMO'])),
+    EspSubRecord.new('ANAM', 'Far Away Model',
+                     EspFormID.new('far_model', ['ARMO'])),
+    # Head parts (repeating)
+    EspSubRecord.new('PNAM', 'Head Part',
+                     EspFormID.new('head_part', ['HDPT'])),
+    EspSubRecord.new('HCLF', 'Hair Color',
+                     EspFormID.new('hair_color', ['CLFM'])),
+    EspSubRecord.new('ZNAM', 'Combat Style',
+                     EspFormID.new('combat_style', ['CSTY'])),
+    EspSubRecord.new('GNAM', 'Gifts',
+                     EspFormID.new('gift_filter', ['FLST'])),
     EspSubRecord.new('NAM5', 'Unknown', EspByteArray.new('nam5')),
     EspSubRecord.new('NAM6', 'Height', EspFloat.new('height')),
     EspSubRecord.new('NAM7', 'Weight', EspFloat.new('weight')),
-    # Default outfit
+    EspSubRecord.new('NAM8', 'Sound Level',
+                     EspInteger.new('sound_level', IntType.U32)),
+    # Outfits
     EspSubRecord.new('DOFT', 'Default Outfit',
                      EspFormID.new('default_outfit', ['OTFT'])),
-    # Head parts (array of HDPT references, each as PNAM subrecord)
-    EspSubRecord.new('PNAM', 'Head Part',
-                     EspFormID.new('head_part', ['HDPT'])),
+    EspSubRecord.new('DPLT', 'Default Package List',
+                     EspFormID.new('default_package_list', ['FLST'])),
+    EspSubRecord.new('SOFT', 'Sleep Outfit',
+                     EspFormID.new('sleep_outfit', ['OTFT'])),
+    EspSubRecord.new('CRIF', 'Crime Faction',
+                     EspFormID.new('crime_faction', ['FACT'])),
+    EspSubRecord.new('FTST', 'Head Texture',
+                     EspFormID.new('head_texture', ['TXST'])),
     # Texture lighting color
     EspSubRecord.new('QNAM', 'Texture Lighting', EspStruct.new('qnam', [
         EspFloat.new('red'),
         EspFloat.new('green'),
         EspFloat.new('blue'),
     ])),
-    # Tint layers
+    # Face morph
+    EspSubRecord.new('NAM9', 'Face Morph', EspByteArray.new('face_morph')),
+    # Face parts
+    EspSubRecord.new('NAMA', 'Face Parts', EspStruct.new('face_parts', [
+        EspInteger.new('nose', IntType.U32),
+        EspInteger.new('unknown', IntType.U32),
+        EspInteger.new('eyes', IntType.U32),
+        EspInteger.new('mouth', IntType.U32),
+    ])),
+    # Tint layers (repeating set)
     EspSubRecord.new('TINI', 'Tint Index',
                      EspInteger.new('index', IntType.U16)),
     EspSubRecord.new('TINC', 'Tint Color', EspStruct.new('color', [
@@ -1078,15 +1126,6 @@ NPC_ = EspRecord.new('NPC_', 'Non-Player Character', [
                      EspInteger.new('value', IntType.S32)),
     EspSubRecord.new('TIAS', 'Tint Preset',
                      EspInteger.new('preset', IntType.S16)),
-    # Face morph
-    EspSubRecord.new('NAM9', 'Face Morph', EspByteArray.new('face_morph')),
-    # Face parts
-    EspSubRecord.new('NAMA', 'Face Parts', EspStruct.new('face_parts', [
-        EspInteger.new('nose', IntType.U32),
-        EspInteger.new('unknown', IntType.U32),
-        EspInteger.new('eyes', IntType.U32),
-        EspInteger.new('mouth', IntType.U32),
-    ])),
 ])
 
 
