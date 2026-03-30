@@ -440,12 +440,12 @@ class Plugin:
         Returns the new record.
         """
         source = source_plugin or getattr(record, '_plugin', None)
-        if source:
+        if source is not None:
             self.add_recursive_masters(source)
 
         new_record = record.copy()
 
-        if (source and source.is_localized
+        if (source is not None and source.is_localized
                 and not self.is_localized
                 and source.string_tables):
             self._delocalize_strings(new_record, source)

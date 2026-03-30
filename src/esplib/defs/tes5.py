@@ -1113,10 +1113,24 @@ NPC_ = EspRecord.new('NPC_', 'Non-Player Character', [
         EspInteger.new('eyes', IntType.U32),
         EspInteger.new('mouth', IntType.U32),
     ])),
-    # Tint layers (TINI/TINC/TINV/TIAS) are NOT in the schema because
-    # they're a repeating interleaved set. Auto-sort would group all TINIs
-    # together, breaking xEdit. They're handled manually and appended
-    # after the schema-sorted subrecords.
+    # Tint layers — repeating group. Each instance is TINI+TINC+TINV+TIAS.
+    # TINI is the group leader: auto-sort collects each TINI and its
+    # following TINC/TINV/TIAS into a GroupInstance, preserving the
+    # interleaved order across instances.
+    EspGroup.new('Tint Layer', [
+        EspSubRecord.new('TINI', 'Tint Index',
+                         EspInteger.new('index', IntType.U16)),
+        EspSubRecord.new('TINC', 'Tint Color', EspStruct.new('color', [
+            EspInteger.new('red', IntType.U8),
+            EspInteger.new('green', IntType.U8),
+            EspInteger.new('blue', IntType.U8),
+            EspInteger.new('alpha', IntType.U8),
+        ])),
+        EspSubRecord.new('TINV', 'Tint Interpolation Value',
+                         EspInteger.new('value', IntType.S32)),
+        EspSubRecord.new('TIAS', 'Tint Preset',
+                         EspInteger.new('preset', IntType.S16)),
+    ]),
 ])
 
 
