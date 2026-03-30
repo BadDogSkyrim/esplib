@@ -286,6 +286,12 @@ class Plugin:
         return self._signature_index.get(signature, []).copy()
 
     def add_record(self, record: Record, group_signature: Optional[str] = None) -> None:
+        if record.form_id.value == 0:
+            record.form_id = self.get_next_form_id()
+        if record.version == 40 and self._game_registry:
+            # Set record version to match the game (40 is the default)
+            record.version = self._RECORD_VERSIONS.get(
+                self._game_registry.game_id, 40)
         self.records.append(record)
 
         target_group = None
@@ -349,11 +355,17 @@ class Plugin:
                     return True
         return False
 
-    _GAME_VERSIONS = {
+    _GAME_VERSIONS = {  # Plugin header version
         'tes5': 1.71,
         'tes5le': 0.94,
         'fo4': 0.95,
         'sf1': 0.96,
+    }
+    _RECORD_VERSIONS = {  # Default form version for new records
+        'tes5': 44,
+        'tes5le': 40,
+        'fo4': 131,
+        'sf1': 148,
     }
     # Aliases for set_game() -- tes5le uses the same schemas as tes5
     _GAME_ALIASES = {

@@ -5,61 +5,19 @@ import zlib
 import pytest
 from pathlib import Path
 
-# Common paths to check for real game files
-SKYRIM_DATA_PATHS = [
-    Path(r"C:\Steam\steamapps\common\Skyrim Special Edition\Data"),
-    Path(r"C:\Program Files (x86)\Steam\steamapps\common\Skyrim Special Edition\Data"),
-    Path(r"C:\Program Files\Steam\steamapps\common\Skyrim Special Edition\Data"),
-    Path(r"D:\Steam\steamapps\common\Skyrim Special Edition\Data"),
-    Path(r"D:\SteamLibrary\steamapps\common\Skyrim Special Edition\Data"),
-    Path(r"E:\SteamLibrary\steamapps\common\Skyrim Special Edition\Data"),
-]
+from esplib.game_discovery import (
+    find_game_data, find_game_file, find_strings_dir,
+)
 
 
 def find_skyrim_data() -> Path | None:
-    for p in SKYRIM_DATA_PATHS:
-        if p.exists():
-            return p
-    return None
+    """Find Skyrim SE Data directory. Convenience alias for tests."""
+    return find_game_data('tes5')
 
 
 def find_skyrim_esm() -> Path | None:
-    data = find_skyrim_data()
-    if data:
-        esm = data / "Skyrim.esm"
-        if esm.exists():
-            return esm
-    return None
-
-
-def find_game_file(name: str) -> Path | None:
-    """Find any file in the Skyrim Data folder (e.g. 'Dawnguard.esm')."""
-    data = find_skyrim_data()
-    if data:
-        path = data / name
-        if path.exists():
-            return path
-    return None
-
-
-STRING_TABLE_PATHS = [
-    Path(r"C:\Modding\SkyrimSEAssets\00 Vanilla Assets\strings"),
-]
-
-
-def find_strings_dir() -> Path | None:
-    """Find directory containing Skyrim_english.STRINGS."""
-    data = find_skyrim_data()
-    if data:
-        d = data / "Strings"
-        if (d / "Skyrim_english.STRINGS").exists():
-            return d
-    for p in STRING_TABLE_PATHS:
-        if p.exists():
-            for f in p.iterdir():
-                if f.name.lower() == "skyrim_english.strings":
-                    return p
-    return None
+    """Find Skyrim.esm. Convenience alias for tests."""
+    return find_game_file('Skyrim.esm', 'tes5')
 
 
 @pytest.fixture(scope="session")
@@ -71,12 +29,11 @@ def skyrim_plugin():
     """
     from esplib import Plugin
     esm_path = find_skyrim_esm()
-    if not esm_path:
-        pytest.skip("Skyrim.esm not found")
+    assert esm_path, "Skyrim.esm not found"
     strings_dir = find_strings_dir()
+    assert strings_dir, "String tables not found"
     p = Plugin()
-    if strings_dir:
-        p.string_search_dirs = [str(strings_dir)]
+    p.string_search_dirs = [str(strings_dir)]
     p.load(esm_path)
     return p
 

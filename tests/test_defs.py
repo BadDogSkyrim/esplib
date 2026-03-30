@@ -21,9 +21,19 @@ class TestEspFlags:
     def test_decode(self):
         flags = EspFlags.new({0: 'Playable', 1: 'Non-Equippable', 4: 'Special'})
         result = flags.decode(0b10001)  # bits 0 and 4
+        # Item access
         assert result['Playable'] is True
         assert result['Non-Equippable'] is False
         assert result['Special'] is True
+        # Attribute access
+        assert result.Playable is True
+        assert result.Special is True
+        # Containment (True only if flag is set)
+        assert 'Playable' in result
+        assert 'Special' in result
+        assert 'Non-Equippable' not in result
+        # Int conversion
+        assert int(result) == 0b10001
 
     def test_encode_from_set(self):
         flags = EspFlags.new({0: 'A', 1: 'B', 2: 'C'})
@@ -113,8 +123,7 @@ class TestEspInteger:
         defn = EspInteger.new('type', IntType.U8, formatter=enum)
         reader = BinaryReader(b'\x01')
         val = defn.from_bytes(reader)
-        assert val == 1
-        assert enum.decode(val) == 'Sword'
+        assert val == 'Sword'
 
     def test_to_bytes_with_enum_encode(self):
         enum = EspEnum.new({0: 'None', 1: 'Sword'})

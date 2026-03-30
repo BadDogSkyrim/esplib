@@ -14,12 +14,16 @@ from tests.conftest import find_skyrim_esm
 
 class FakeArgs:
     """Minimal args object for testing commands."""
+
+
     def __init__(self, **kwargs):
         for k, v in kwargs.items():
             setattr(self, k, v)
 
 
 class TestFileNotFound:
+
+
     def test_info_missing_file(self, capsys):
         from esplib.cli.main import main
         with patch('sys.argv', ['esplib', 'info', 'nonexistent_plugin.esp']):
@@ -27,6 +31,7 @@ class TestFileNotFound:
         assert ret == 1
         err = capsys.readouterr().err
         assert 'file not found' in err.lower()
+
 
     def test_diff_missing_file(self, tmp_path, capsys):
         # Create one valid file, reference one missing
@@ -42,6 +47,8 @@ class TestFileNotFound:
 
 
 class TestInfoCommand:
+
+
     def test_info_text(self, tmp_path, capsys):
         plugin = Plugin()
         plugin.header.is_esm = True
@@ -59,6 +66,7 @@ class TestInfoCommand:
         assert 'ESM' in out
         assert 'TestAuthor' in out
 
+
     def test_info_json(self, tmp_path, capsys):
         plugin = Plugin()
         plugin.header.is_esm = True
@@ -73,6 +81,8 @@ class TestInfoCommand:
 
 
 class TestDumpCommand:
+
+
     def test_dump_text(self, tmp_path, capsys):
         plugin = Plugin()
         rec = Record('GMST', FormID(0x800), 0)
@@ -87,6 +97,7 @@ class TestDumpCommand:
         dump.run(args)
         out = capsys.readouterr().out
         assert 'fTestVal' in out
+
 
     def test_dump_json(self, tmp_path, capsys):
         plugin = Plugin()
@@ -104,6 +115,7 @@ class TestDumpCommand:
         assert isinstance(data, list)
         assert len(data) == 1
 
+
     def test_dump_csv(self, tmp_path, capsys):
         plugin = Plugin()
         rec = Record('GMST', FormID(0x800), 0)
@@ -118,6 +130,7 @@ class TestDumpCommand:
         out = capsys.readouterr().out
         assert '_signature' in out  # CSV header
         assert 'GMST' in out
+
 
     def test_dump_filter_by_type(self, tmp_path, capsys):
         plugin = Plugin()
@@ -139,6 +152,8 @@ class TestDumpCommand:
 
 
 class TestDiffCommand:
+
+
     def test_diff_text(self, tmp_path, capsys):
         p1 = Plugin()
         rec1 = Record('GMST', FormID(0x800), 0)
@@ -162,6 +177,7 @@ class TestDiffCommand:
         out = capsys.readouterr().out
         assert 'Changed:   1' in out
 
+
     def test_diff_json(self, tmp_path, capsys):
         p1 = Plugin()
         path1 = tmp_path / 'a.esp'
@@ -182,6 +198,8 @@ class TestDiffCommand:
 
 
 class TestValidateCommand:
+
+
     def test_valid_plugin(self, tmp_path, capsys):
         plugin = Plugin()
         rec = Record('GMST', FormID(0x800), 0)
@@ -193,6 +211,7 @@ class TestValidateCommand:
         ret = validate.run(args)
         assert ret == 0
         assert 'no issues' in capsys.readouterr().out
+
 
     def test_duplicate_formid(self, tmp_path, capsys):
         plugin = Plugin()
@@ -208,6 +227,8 @@ class TestValidateCommand:
 
 
 class TestRenameMasterCommand:
+
+
     def test_rename(self, tmp_path, capsys):
         plugin = Plugin()
         plugin.header.masters = ['OldMaster.esm']
@@ -227,6 +248,7 @@ class TestRenameMasterCommand:
         reloaded = Plugin(path)
         assert reloaded.header.masters == ['NewMaster.esm']
 
+
     def test_rename_nonexistent_master(self, tmp_path, capsys):
         plugin = Plugin()
         plugin.header.masters = ['Real.esm']
@@ -238,3 +260,92 @@ class TestRenameMasterCommand:
                         new_name='New.esm')
         ret = rename_master.run(args)
         assert ret == 1
+
+
+# ===================================================================
+# Gamefiles CLI tests (against real Skyrim.esm)
+# ===================================================================
+
+
+class TestInfoSkyrim:
+
+
+    @pytest.fixture(scope='class')
+    def esm_path(self):
+        from tests.conftest import find_skyrim_esm
+        path = find_skyrim_esm()
+        if not path:
+            assert False, "Skyrim.esm not found"
+        return str(path)
+
+
+    @pytest.mark.gamefiles
+    @pytest.mark.slow
+    def test_info_text_shows_esm(self, esm_path, capsys):
+        args = FakeArgs(plugin=esm_path, format='text')
+        info.run(args)
+        out = capsys.readouterr().out
+        assert 'ESM' in out
+
+
+    @pytest.mark.gamefiles
+    @pytest.mark.slow
+    def test_info_json_valid(self, esm_path, capsys):
+        args = FakeArgs(plugin=esm_path, format='json')
+        info.run(args)
+        out = capsys.readouterr().out
+        data = json.loads(out)
+        assert data['file_type'] == 'ESM'
+        assert data['is_localized'] is True
+        assert 'WEAP' in data['record_types']
+
+
+class TestDumpSkyrim:
+
+
+    @pytest.fixture(scope='class')
+    def esm_path(self):
+        from tests.conftest import find_skyrim_esm
+        path = find_skyrim_esm()
+        if not path:
+            assert False, "Skyrim.esm not found"
+        return str(path)
+
+
+    @pytest.mark.gamefiles
+    @pytest.mark.slow
+    def test_dump_weap_by_editor_id(self, esm_path, capsys):
+        args = FakeArgs(plugin=esm_path, record_type='WEAP',
+                        form_id=None, editor_id='IronSword',
+                        game=None, format='text', limit=0)
+        dump.run(args)
+        out = capsys.readouterr().out
+        assert 'IronSword' in out
+
+
+    @pytest.mark.gamefiles
+    @pytest.mark.slow
+    def test_dump_glob_csv(self, esm_path, capsys):
+        args = FakeArgs(plugin=esm_path, record_type='GLOB',
+                        form_id=None, editor_id=None,
+                        game=None, format='csv', limit=5)
+        dump.run(args)
+        out = capsys.readouterr().out
+        lines = out.strip().splitlines()
+        assert len(lines) >= 2
+        assert len(lines) <= 6
+
+
+class TestValidateSkyrim:
+
+
+    @pytest.mark.gamefiles
+    @pytest.mark.slow
+    def test_skyrim_esm_valid(self, capsys):
+        from tests.conftest import find_skyrim_esm
+        esm_path = find_skyrim_esm()
+        if not esm_path:
+            assert False, "Skyrim.esm not found"
+        args = FakeArgs(plugin=str(esm_path), game=None, format='text')
+        ret = validate.run(args)
+        assert ret is not None

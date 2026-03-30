@@ -53,29 +53,101 @@ class IntType(Enum):
 # Formatters -- EspFlags, EspEnum
 # ---------------------------------------------------------------------------
 
+class FlagSet:
+    """A decoded set of flags supporting attribute, item, and containment access.
+
+    Usage:
+        flags.Female          # True/False
+        flags['Female']       # True/False
+        'Female' in flags     # True if the flag is set
+        int(flags)            # raw integer value
+        for name in flags:    # iterate over set flag names
+    """
+
+    def __init__(self, value: int, names: Dict[int, str]):
+        self._value = value
+        self._names = names  # bit -> name
+        self._flags = {}
+        self._name_to_bit = {}
+        for bit, name in names.items():
+            is_set = bool(value & (1 << bit))
+            # Store with Pythonic attribute name (lowercase, underscored)
+            attr = name.replace(' ', '_').replace("'", '').replace('-', '_')
+            self._flags[name] = is_set
+            self._name_to_bit[name] = bit
+            self._name_to_bit[attr] = bit
+            object.__setattr__(self, attr, is_set)
+
+
+    def __getitem__(self, name: str) -> bool:
+        if name in self._flags:
+            return self._flags[name]
+        # Try attribute-style name
+        attr = name.replace(' ', '_').replace("'", '').replace('-', '_')
+        if attr in self._flags:
+            return self._flags[attr]
+        raise KeyError(name)
+
+
+    def __contains__(self, name: str) -> bool:
+        """True if the named flag is set (not just defined)."""
+        try:
+            return self[name]
+        except KeyError:
+            return False
+
+
+    def __iter__(self):
+        """Iterate over names of flags that are set."""
+        return (name for name, is_set in self._flags.items() if is_set)
+
+
+    def __int__(self) -> int:
+        return self._value
+
+
+    def __repr__(self) -> str:
+        set_flags = [name for name, is_set in self._flags.items() if is_set]
+        return f"FlagSet({', '.join(set_flags)})"
+
+
+    def __eq__(self, other) -> bool:
+        if isinstance(other, FlagSet):
+            return self._value == other._value
+        if isinstance(other, int):
+            return self._value == other
+        return NotImplemented
+
+
 @dataclass
 class EspFlags:
     """Bit flag names for an integer field."""
     names: Dict[int, str]
 
+
     @classmethod
     def new(cls, names: Dict[int, str]) -> EspFlags:
         return cls(names=names)
 
-    def decode(self, value: int) -> Dict[str, bool]:
-        """Decode an integer into a dict of flag_name -> is_set."""
-        return {name: bool(value & (1 << bit)) for bit, name in self.names.items()}
 
-    def encode(self, flags: Union[int, Dict[str, bool], set]) -> int:
+    def decode(self, value: int) -> FlagSet:
+        """Decode an integer into a FlagSet."""
+        return FlagSet(value, self.names)
+
+
+    def encode(self, flags) -> int:
         """Encode flags back to an integer.
 
         Accepts:
           - int: pass through
+          - FlagSet: extract int value
           - dict of {name: bool}: set named flags
           - set of names: set those flags
         """
         if isinstance(flags, int):
             return flags
+        if isinstance(flags, FlagSet):
+            return int(flags)
         if isinstance(flags, set):
             flags = {name: True for name in flags}
 
@@ -86,6 +158,7 @@ class EspFlags:
             if is_set and name in name_to_bit:
                 value |= (1 << name_to_bit[name])
         return value
+
 
     def to_dict(self) -> dict:
         return {'type': 'flags', 'names': {str(k): v for k, v in self.names.items()}}
@@ -142,9 +215,12 @@ class EspInteger:
             formatter: Union[EspFlags, EspEnum, None] = None) -> EspInteger:
         return cls(name=name, int_type=int_type, formatter=formatter)
 
-    def from_bytes(self, reader: BinaryReader, ctx: EspContext = None) -> int:
+    def from_bytes(self, reader: BinaryReader, ctx: EspContext = None):
         data = reader.read_bytes(self.int_type.byte_size)
-        return struct.unpack(f'<{self.int_type.fmt}', data)[0]
+        value = struct.unpack(f'<{self.int_type.fmt}', data)[0]
+        if self.formatter:
+            return self.formatter.decode(value)
+        return value
 
     def to_bytes(self, value: int) -> bytes:
         if self.formatter and not isinstance(value, int):

@@ -1,16 +1,12 @@
-"""Phase 5 converted tests: cross-plugin references and override chain detail.
-
-Game discovery tests are in test_discovery.py. Load order and basic
-override chain tests are in test_masters.py. These tests cover the
-remaining Phase 5 manual scenarios: richer override chain assertions
-and cross-plugin (DLC) reference resolution.
+"""
+These tests cover override chain assertions and cross-plugin (DLC) reference resolution.
 """
 
 import pytest
 
 from esplib import Plugin, LoadOrder, PluginSet
-from esplib.defs import tes5
 from esplib.game_discovery import find_game
+import esplib.defs.tes5  # noqa: F401 -- registers tes5 game schemas
 
 from tests.conftest import find_skyrim_esm, find_game_file
 
@@ -22,13 +18,14 @@ from tests.conftest import find_skyrim_esm, find_game_file
 class TestOverrideChainDetail:
     """Detailed override chain tests with real game files."""
 
+
     @pytest.fixture(scope='class')
     def plugin_set(self):
         game = find_game('tes5')
         if game is None:
-            pytest.skip("Skyrim SE not installed")
+            assert False, "Skyrim SE not installed"
         if not (game.data_dir / 'Update.esm').exists():
-            pytest.skip("Update.esm not found")
+            assert False, "Update.esm not found"
 
         lo = LoadOrder.from_list(
             ['Skyrim.esm', 'Update.esm'],
@@ -37,12 +34,14 @@ class TestOverrideChainDetail:
         ps.load_all()
         return ps
 
+
     @pytest.mark.gamefiles
     @pytest.mark.slow
     def test_update_esm_has_overrides(self, plugin_set):
         """Update.esm should override at least some Skyrim.esm records."""
         overrides = list(plugin_set.overridden_records())
         assert len(overrides) > 0
+
 
     @pytest.mark.gamefiles
     @pytest.mark.slow
@@ -51,6 +50,7 @@ class TestOverrideChainDetail:
         overrides = list(plugin_set.overridden_records())
         for fid, chain in overrides[:10]:
             assert len(chain) == 2
+
 
     @pytest.mark.gamefiles
     @pytest.mark.slow
@@ -71,13 +71,14 @@ class TestOverrideChainDetail:
 class TestDawnguardCrossPlugin:
     """Test cross-plugin references using Dawnguard.esm."""
 
+
     @pytest.fixture(scope='class')
     def dawnguard_set(self):
         game = find_game('tes5')
         if game is None:
-            pytest.skip("Skyrim SE not installed")
+            assert False, "Skyrim SE not installed"
         if not (game.data_dir / 'Dawnguard.esm').exists():
-            pytest.skip("Dawnguard.esm not found")
+            assert False, "Dawnguard.esm not found"
 
         lo = LoadOrder.from_list(
             ['Skyrim.esm', 'Update.esm', 'Dawnguard.esm'],
@@ -86,12 +87,14 @@ class TestDawnguardCrossPlugin:
         ps.load_all()
         return ps
 
+
     @pytest.mark.gamefiles
     @pytest.mark.slow
     def test_dawnguard_loads(self, dawnguard_set):
         """Dawnguard plugin set loads at least 2 plugins."""
         # At minimum Skyrim.esm + Dawnguard.esm (Update might be missing)
         assert dawnguard_set.get_plugin('Dawnguard.esm') is not None
+
 
     @pytest.mark.gamefiles
     @pytest.mark.slow
@@ -101,6 +104,7 @@ class TestDawnguardCrossPlugin:
         weapons = dawnguard.get_records_by_signature('WEAP')
         assert len(weapons) > 0
 
+
     @pytest.mark.gamefiles
     @pytest.mark.slow
     def test_dawnguard_crossbow_resolves(self, dawnguard_set):
@@ -108,33 +112,31 @@ class TestDawnguardCrossPlugin:
         dawnguard = dawnguard_set.get_plugin('Dawnguard.esm')
         dawnguard.set_game('tes5')
 
-        weapons = dawnguard.get_records_by_signature('WEAP')
-        crossbow = None
-        for w in weapons:
-            edid = w.editor_id
-            if edid and 'Crossbow' in edid:
-                crossbow = w
-                break
+        crossbow = dawnguard.get_record_by_editor_id('DLC1CrossBow')
+        assert crossbow is not None, "DLC1CrossBow not found in Dawnguard.esm"
 
-        if crossbow is None:
-            pytest.skip("No crossbow weapon found in Dawnguard.esm")
-
-        result = tes5.WEAP.from_record(crossbow)
-        data = result['Game Data']
+        data = crossbow['DATA']
         assert data['damage'] > 0
         assert data['value'] > 0
+
 
     @pytest.mark.gamefiles
     @pytest.mark.slow
     def test_dawnguard_all_weap_resolve(self, dawnguard_set):
-        """All Dawnguard WEAP records should resolve without errors."""
+        """Walk all Dawnguard WEAP records; each should be valid and parseable."""
         dawnguard = dawnguard_set.get_plugin('Dawnguard.esm')
+        dawnguard.set_game('tes5')
 
         weapons = dawnguard.get_records_by_signature('WEAP')
+        assert len(weapons) > 0
+
         errors = []
         for w in weapons:
+            assert w.signature == 'WEAP'
+            assert w.form_id.value != 0
             try:
-                tes5.WEAP.from_record(w)
+                data = w['DATA']
+                assert data is not None
             except Exception as e:
                 errors.append(f"{w.editor_id or w.form_id}: {e}")
 
@@ -148,24 +150,26 @@ class TestDawnguardCrossPlugin:
 class TestLoadOrderFromGame:
     """Test reading the actual load order from the Skyrim installation."""
 
+
     @pytest.mark.gamefiles
     def test_load_order_has_implicit_masters(self):
         """Skyrim load order should start with implicit masters."""
         game = find_game('tes5')
         if game is None:
-            pytest.skip("Skyrim SE not installed")
+            assert False, "Skyrim SE not installed"
 
         lo = LoadOrder.from_game('tes5')
         assert lo[0] == 'Skyrim.esm'
         # Update.esm should be in the first few entries
         assert 'Update.esm' in lo.plugins[:5]
 
+
     @pytest.mark.gamefiles
     def test_load_order_includes_dlc(self):
         """DLC masters should appear in the load order."""
         game = find_game('tes5')
         if game is None:
-            pytest.skip("Skyrim SE not installed")
+            assert False, "Skyrim SE not installed"
 
         lo = LoadOrder.from_game('tes5')
         # At least one DLC should be present in a standard install
@@ -173,12 +177,13 @@ class TestLoadOrderFromGame:
         found = dlc_names & set(lo.plugins)
         assert len(found) > 0, "No DLC found in load order"
 
+
     @pytest.mark.gamefiles
     def test_load_order_count(self):
         """Load order should have a reasonable number of plugins."""
         game = find_game('tes5')
         if game is None:
-            pytest.skip("Skyrim SE not installed")
+            assert False, "Skyrim SE not installed"
 
         lo = LoadOrder.from_game('tes5')
         # At minimum: Skyrim.esm + Update.esm + some DLC

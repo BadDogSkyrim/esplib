@@ -14,12 +14,13 @@ from esplib.record import COMPRESSED_FLAG
 
 from tests.conftest import (
     make_subrecord, make_xxxx_subrecord, make_record, make_group,
-    make_tes4_record, make_simple_plugin, find_skyrim_esm,
+    make_tes4_record, make_simple_plugin,
 )
 
 
-class TestRecordHeaderPreservation:
+class TestStructHeaderPreservation:
     """Test that record header fields survive round-trip."""
+
 
     def test_record_preserves_timestamp(self):
         sub = make_subrecord('EDID', b'TestItem\x00')
@@ -32,6 +33,7 @@ class TestRecordHeaderPreservation:
         output = record.to_bytes()
         assert output == raw
 
+
     def test_record_preserves_version_and_vci(self):
         sub = make_subrecord('EDID', b'Test\x00')
         raw = make_record('ARMO', 0x200, 0, sub, version=44, vci=0xBEEF)
@@ -42,6 +44,7 @@ class TestRecordHeaderPreservation:
         assert record.version == 44
         assert record.version_control_info == 0xBEEF
         assert record.to_bytes() == raw
+
 
     def test_group_preserves_header_fields(self):
         sub = make_subrecord('EDID', b'Test\x00')
@@ -57,8 +60,9 @@ class TestRecordHeaderPreservation:
         assert group.to_bytes() == raw
 
 
-class TestCompression:
+class TestStructCompression:
     """Test compressed record handling."""
+
 
     def test_load_compressed_record(self):
         """Compressed records should be decompressed and subrecords parsed."""
@@ -75,6 +79,7 @@ class TestCompression:
         assert record.subrecords[0].signature == 'EDID'
         assert record.subrecords[0].get_string() == 'CompressedItem'
         assert record.subrecords[1].get_uint32() == 42
+
 
     def test_compressed_record_roundtrip(self):
         """Compressed records should re-compress on save."""
@@ -95,6 +100,7 @@ class TestCompression:
         assert record2.subrecords[0].get_string() == 'TestCompress'
         assert abs(record2.subrecords[1].get_float() - 3.14) < 0.001
 
+
     def test_uncompressed_record_stays_uncompressed(self):
         sub = make_subrecord('EDID', b'Plain\x00')
         raw = make_record('MISC', 0x500, 0, sub)
@@ -107,8 +113,9 @@ class TestCompression:
         assert not record.is_compressed
 
 
-class TestXXXXOverflow:
+class TestStructXXXXOverflow:
     """Test XXXX subrecord overflow handling."""
+
 
     def test_read_xxxx_subrecord(self):
         """XXXX marker should set the size for the next subrecord."""
@@ -126,6 +133,7 @@ class TestXXXXOverflow:
         assert record.subrecords[0].size == len(big_data)
         assert record.subrecords[0].data == big_data
 
+
     def test_write_xxxx_subrecord(self):
         """Subrecords > 65535 bytes should use XXXX overflow on write."""
         big_data = b'\xAB' * 70000
@@ -142,6 +150,7 @@ class TestXXXXOverflow:
         assert record2.subrecords[0].signature == 'BIGX'
         assert record2.subrecords[0].data == big_data
 
+
     def test_normal_subrecord_no_xxxx(self):
         """Subrecords <= 65535 bytes should NOT use XXXX."""
         small_data = b'\x00' * 100
@@ -153,6 +162,7 @@ class TestXXXXOverflow:
         assert raw[:4] == b'DATA'
         assert struct.unpack('<H', raw[4:6])[0] == 100
 
+
     def test_boundary_65535_no_xxxx(self):
         """Exactly 65535 bytes should fit without XXXX."""
         data = b'\xFF' * 65535
@@ -163,6 +173,7 @@ class TestXXXXOverflow:
         assert struct.unpack('<H', raw[4:6])[0] == 65535
         assert len(raw) == 6 + 65535
 
+
     def test_boundary_65536_uses_xxxx(self):
         """65536 bytes should trigger XXXX."""
         data = b'\xFF' * 65536
@@ -172,8 +183,9 @@ class TestXXXXOverflow:
         assert raw[:4] == b'XXXX'
 
 
-class TestGroupOffsetParsing:
+class TestStructGroupOffsetParsing:
     """Test that GroupRecord uses offset-based end detection."""
+
 
     def test_nested_groups(self):
         """Nested groups should parse correctly with offset tracking."""
@@ -195,6 +207,7 @@ class TestGroupOffsetParsing:
         assert group.records[0].timestamp == 0xAAAA
         assert group.timestamp == 0xBBBB
 
+
     def test_empty_group(self):
         """Empty group (header only) should parse correctly."""
         raw = make_group('EMTY', 0, b'')
@@ -203,6 +216,7 @@ class TestGroupOffsetParsing:
 
         assert len(group.records) == 0
         assert group.to_bytes() == raw
+
 
     def test_multiple_groups_sequential(self):
         """Multiple groups in sequence should each parse to their boundary."""
@@ -227,8 +241,9 @@ class TestGroupOffsetParsing:
         assert reader.at_end()
 
 
-class TestPluginRoundTrip:
+class TestStructPluginRoundTrip:
     """Test full plugin load/save round-trips."""
+
 
     def test_simple_plugin_roundtrip(self):
         """A simple synthetic plugin should round-trip exactly."""
@@ -257,6 +272,7 @@ class TestPluginRoundTrip:
 
         output = plugin.to_bytes()
         assert output == raw
+
 
     def test_plugin_with_compressed_records(self):
         """Plugin with compressed records should round-trip (subrecord content preserved)."""
@@ -304,6 +320,7 @@ class TestPluginRoundTrip:
         assert plugin2.records[0].editor_id == 'CompressedWeapon'
         assert plugin2.records[0].is_compressed
 
+
     def test_plugin_with_masters(self):
         """Plugin with master files should preserve master list."""
         raw = make_simple_plugin(
@@ -335,20 +352,122 @@ class TestPluginRoundTrip:
 class TestSkyrimRoundTrip:
     """Integration tests with real Skyrim.esm."""
 
+
     @pytest.mark.gamefiles
     @pytest.mark.slow
-    def test_skyrim_esm_roundtrip(self):
+    def test_skyrim_esm_roundtrip(self, skyrim_plugin):
         """Load Skyrim.esm, save to bytes, compare checksums."""
-        esm_path = find_skyrim_esm()
-        if not esm_path:
-            pytest.skip("Skyrim.esm not found")
-
+        esm_path = skyrim_plugin.file_path
         with open(esm_path, 'rb') as f:
             original_data = f.read()
 
-        plugin = Plugin(esm_path)
-        output = plugin.to_bytes()
+        output = skyrim_plugin.to_bytes()
 
         assert len(output) == len(original_data), (
             f"Size mismatch: original={len(original_data)}, output={len(output)}")
         assert output == original_data, "Byte-for-byte comparison failed"
+
+
+    @pytest.mark.gamefiles
+    @pytest.mark.slow
+    def test_dawnguard_roundtrip_with_schemas(self):
+        """Loading Dawnguard.esm with schemas bound should produce identical bytes.
+
+        Auto-sort must not reorder already-correct subrecords.
+        """
+        from tests.conftest import find_game_file
+        esm_path = find_game_file('Dawnguard.esm')
+        if not esm_path:
+            assert False, "Dawnguard.esm not found"
+
+        with open(esm_path, 'rb') as f:
+            original = f.read()
+
+        plugin = Plugin(esm_path)
+        import esplib.defs.tes5
+        plugin.set_game('tes5')
+
+        output = plugin.to_bytes()
+        assert len(output) == len(original), \
+            f"Size mismatch: original={len(original)}, output={len(output)}"
+        assert output == original, "Round-trip broken by auto-sort"
+
+
+class TestStructAutoSort:
+    """Auto-sort subrecords on save based on schema ordering."""
+
+
+    def test_wrong_order_gets_sorted(self):
+        """Subrecords added in wrong order are sorted by schema on save."""
+        from esplib.defs import tes5
+
+        record = Record('WEAP', FormID(0x01000800), 0)
+        record.schema = tes5.WEAP
+        record.add_subrecord('DATA', struct.pack('<Ifh', 25, 0, 7))
+        record.add_subrecord('DESC', b'A sword.\x00')
+        record.add_subrecord('EDID', b'TestSword\x00')
+        record.add_subrecord('OBND', struct.pack('<6h', 0, 0, 0, 0, 0, 0))
+
+        raw = record.to_bytes()
+        reader = BinaryReader(raw)
+        reparsed = Record.from_bytes(reader)
+
+        sigs = [sr.signature for sr in reparsed.subrecords]
+        assert sigs.index('EDID') < sigs.index('OBND')
+        assert sigs.index('OBND') < sigs.index('DESC')
+        assert sigs.index('DESC') < sigs.index('DATA')
+
+
+    def test_unknown_subrecords_at_end(self):
+        """Subrecords not in schema appear after known ones."""
+        from esplib.defs import tes5
+
+        record = Record('WEAP', FormID(0x01000800), 0)
+        record.schema = tes5.WEAP
+        record.add_subrecord('ZZZZ', b'\x00\x00\x00\x00')
+        record.add_subrecord('EDID', b'Test\x00')
+        record.add_subrecord('XXYZ', b'\x01\x02')
+
+        raw = record.to_bytes()
+        reader = BinaryReader(raw)
+        reparsed = Record.from_bytes(reader)
+
+        sigs = [sr.signature for sr in reparsed.subrecords]
+        assert sigs[0] == 'EDID'
+        assert sigs.index('ZZZZ') > sigs.index('EDID')
+        assert sigs.index('XXYZ') > sigs.index('EDID')
+
+
+    def test_unknown_subrecords_preserve_relative_order(self):
+        """Unknown subrecords keep their relative order."""
+        from esplib.defs import tes5
+
+        record = Record('WEAP', FormID(0x01000800), 0)
+        record.schema = tes5.WEAP
+        record.add_subrecord('AAAA', b'\x01')
+        record.add_subrecord('EDID', b'Test\x00')
+        record.add_subrecord('BBBB', b'\x02')
+        record.add_subrecord('CCCC', b'\x03')
+
+        raw = record.to_bytes()
+        reader = BinaryReader(raw)
+        reparsed = Record.from_bytes(reader)
+
+        sigs = [sr.signature for sr in reparsed.subrecords]
+        unknowns = [s for s in sigs if s not in ['EDID']]
+        assert unknowns == ['AAAA', 'BBBB', 'CCCC']
+
+
+    def test_no_schema_no_sort(self):
+        """Without a schema, subrecords stay in original order."""
+        record = Record('WEAP', FormID(0x800), 0)
+        record.add_subrecord('DATA', b'\x00' * 10)
+        record.add_subrecord('EDID', b'Test\x00')
+        record.add_subrecord('OBND', b'\x00' * 12)
+
+        raw = record.to_bytes()
+        reader = BinaryReader(raw)
+        reparsed = Record.from_bytes(reader)
+
+        sigs = [sr.signature for sr in reparsed.subrecords]
+        assert sigs == ['DATA', 'EDID', 'OBND']

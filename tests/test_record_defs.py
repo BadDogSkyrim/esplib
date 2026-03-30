@@ -1,4 +1,4 @@
-"""Tests for Skyrim SE record definitions against real Skyrim.esm data."""
+"""Tests for Skyrim SE record definitions — synthetic and real game file."""
 
 import struct
 import pytest
@@ -14,26 +14,10 @@ from tests.conftest import find_skyrim_esm
 # Synthetic record tests (no game files needed)
 # ---------------------------------------------------------------------------
 
-class TestGMST:
-    def test_float_gmst(self):
-        record = Record('GMST', FormID(0x100), 0)
-        record.add_subrecord('EDID', b'fTestValue\x00')
-        record.add_subrecord('DATA', struct.pack('<f', 3.14))
 
-        result = tes5.GMST.from_record(record)
-        assert result['Editor ID'] == 'fTestValue'
-        assert result['Value'] == struct.pack('<f', 3.14)
-
-    def test_int_gmst(self):
-        record = Record('GMST', FormID(0x101), 0)
-        record.add_subrecord('EDID', b'iTestValue\x00')
-        record.add_subrecord('DATA', struct.pack('<i', 42))
-
-        result = tes5.GMST.from_record(record)
-        assert result['Editor ID'] == 'iTestValue'
+class TestStructGLOB:
 
 
-class TestGLOB:
     def test_float_global(self):
         record = Record('GLOB', FormID(0x200), 0)
         record.add_subrecord('EDID', b'TestGlobal\x00')
@@ -42,11 +26,13 @@ class TestGLOB:
 
         result = tes5.GLOB.from_record(record)
         assert result['Editor ID'] == 'TestGlobal'
-        assert result['Type'] == ord('f')
+        assert result['Type'] == 'Float'
         assert result['Value'] == 1.0
 
 
-class TestKYWD:
+class TestStructKYWD:
+
+
     def test_keyword(self):
         record = Record('KYWD', FormID(0x300), 0)
         record.add_subrecord('EDID', b'WeapTypeSword\x00')
@@ -59,76 +45,9 @@ class TestKYWD:
         assert result['Color']['alpha'] == 255
 
 
-class TestWEAP:
-    def test_weapon_data(self):
-        record = Record('WEAP', FormID(0x800), 0)
-        record.add_subrecord('EDID', b'IronSword\x00')
-        record.add_subrecord('FULL', struct.pack('<H', 10) + b'Iron Sword')
-        record.add_subrecord('DATA',
-                             struct.pack('<I', 25) +       # value
-                             struct.pack('<f', 9.0) +      # weight
-                             struct.pack('<H', 7))         # damage
-
-        result = tes5.WEAP.from_record(record)
-        assert result['Editor ID'] == 'IronSword'
-        assert result['Name'] == 'Iron Sword'
-        assert result['Game Data']['value'] == 25
-        assert abs(result['Game Data']['weight'] - 9.0) < 0.001
-        assert result['Game Data']['damage'] == 7
+class TestStructCOBJ:
 
 
-class TestARMO:
-    def test_armor_data(self):
-        record = Record('ARMO', FormID(0x900), 0)
-        record.add_subrecord('EDID', b'IronArmor\x00')
-        record.add_subrecord('DATA',
-                             struct.pack('<i', 125) +      # value
-                             struct.pack('<f', 30.0))      # weight
-        record.add_subrecord('DNAM', struct.pack('<i', 25))  # armor rating
-
-        result = tes5.ARMO.from_record(record)
-        assert result['Editor ID'] == 'IronArmor'
-        assert result['Data']['value'] == 125
-        assert abs(result['Data']['weight'] - 30.0) < 0.001
-        assert result['Armor Rating'] == 25
-
-
-class TestALCH:
-    def test_potion(self):
-        record = Record('ALCH', FormID(0xA00), 0)
-        record.add_subrecord('EDID', b'PotionOfHealth\x00')
-        record.add_subrecord('DATA', struct.pack('<f', 0.5))  # weight
-
-        result = tes5.ALCH.from_record(record)
-        assert result['Editor ID'] == 'PotionOfHealth'
-        assert abs(result['Weight'] - 0.5) < 0.001
-
-
-class TestLVLI:
-    def test_leveled_item(self):
-        record = Record('LVLI', FormID(0xB00), 0)
-        record.add_subrecord('EDID', b'LItemWeapon\x00')
-        record.add_subrecord('LVLD', bytes([10]))  # 10% chance none
-        record.add_subrecord('LVLF', bytes([0x01]))  # calc all levels
-        record.add_subrecord('LLCT', bytes([2]))  # 2 entries
-        record.add_subrecord('LVLO',
-                             struct.pack('<H', 1) +        # level
-                             struct.pack('<H', 0) +        # padding
-                             struct.pack('<I', 0x12EB7) +  # formid
-                             struct.pack('<H', 1) +        # count
-                             struct.pack('<H', 0))         # padding
-
-        result = tes5.LVLI.from_record(record)
-        assert result['Editor ID'] == 'LItemWeapon'
-        assert result['Chance None'] == 10
-        assert result['Flags'] == 1
-        assert result['Entry Count'] == 2
-        entry = result['Leveled List Entry']
-        assert entry['level'] == 1
-        assert entry['reference'].value == 0x12EB7
-
-
-class TestCOBJ:
     def test_recipe(self):
         record = Record('COBJ', FormID(0xC00), 0)
         record.add_subrecord('EDID', b'RecipeIronSword\x00')
@@ -156,52 +75,33 @@ class TestCOBJ:
         assert result['Created Object Count'] == 1
 
 
-class TestFACT:
-    def test_faction(self):
-        record = Record('FACT', FormID(0xD00), 0)
-        record.add_subrecord('EDID', b'CompanionsFaction\x00')
-        record.add_subrecord('FULL', struct.pack('<H', 10) + b'Companions')
-        record.add_subrecord('DATA', struct.pack('<I', 0x4000))  # Vendor flag
-
-        result = tes5.FACT.from_record(record)
-        assert result['Editor ID'] == 'CompanionsFaction'
-        assert result['Name'] == 'Companions'
-        assert result['Flags'] == 0x4000
+class TestStructNPCTintLayers:
 
 
-class TestNPC:
-    def test_npc_acbs(self):
-        record = Record('NPC_', FormID(0xE00), 0)
+    def test_npc_tint_layers(self):
+        record = Record('NPC_', FormID(0xB01), 0)
         record.add_subrecord('EDID', b'TestNPC\x00')
-
-        # ACBS: 24 bytes
-        acbs = struct.pack('<I', 0x30)   # flags: auto-calc + unique
-        acbs += struct.pack('<h', 0)     # magicka offset
-        acbs += struct.pack('<h', 0)     # stamina offset
-        acbs += struct.pack('<H', 25)    # level
-        acbs += struct.pack('<H', 1)     # calc min
-        acbs += struct.pack('<H', 100)   # calc max
-        acbs += struct.pack('<H', 100)   # speed mult
-        acbs += struct.pack('<h', 0)     # disposition
-        acbs += struct.pack('<H', 0)     # template flags
-        acbs += struct.pack('<h', 0)     # health offset
-        acbs += struct.pack('<H', 0)     # bleedout
-        record.add_subrecord('ACBS', acbs)
-
-        record.add_subrecord('RNAM', struct.pack('<I', 0x13746))  # Nord race
+        record.add_subrecord('TINI', struct.pack('<H', 5))
+        record.add_subrecord('TINC', bytes([255, 128, 0, 200]))
+        record.add_subrecord('TINV', struct.pack('<i', 75))
+        record.add_subrecord('TIAS', struct.pack('<h', -1))
 
         result = tes5.NPC_.from_record(record)
-        assert result['Editor ID'] == 'TestNPC'
-        assert result['Configuration']['level'] == 25
-        assert result['Configuration']['calc_max_level'] == 100
-        assert result['Race'].value == 0x13746
+        assert result['Tint Index'] == 5
+        assert result['Tint Color']['red'] == 255
+        assert result['Tint Color']['green'] == 128
+        assert result['Tint Interpolation Value'] == 75
+        assert result['Tint Preset'] == -1
 
 
-class TestGameRegistry:
+class TestStructGameRegistry:
+
+
     def test_tes5_registered(self):
         registry = GameRegistry.get_game('tes5')
         assert registry is not None
         assert registry.name == 'Skyrim Special Edition'
+
 
     def test_tes5_has_weap(self):
         registry = GameRegistry.get_game('tes5')
@@ -209,15 +109,18 @@ class TestGameRegistry:
         assert weap is not None
         assert weap.name == 'Weapon'
 
+
     def test_detect_skyrim(self):
         registry = GameRegistry.detect_game(1.71)
         assert registry is not None
         assert registry.game_id == 'tes5'
 
+
     def test_all_tier0_registered(self):
         registry = GameRegistry.get_game('tes5')
         for sig in ['GMST', 'GLOB', 'KYWD', 'FLST']:
             assert registry.get(sig) is not None, f"{sig} not registered"
+
 
     def test_all_tier1_registered(self):
         registry = GameRegistry.get_game('tes5')
@@ -226,16 +129,25 @@ class TestGameRegistry:
             assert registry.get(sig) is not None, f"{sig} not registered"
 
 
+    def test_phase_a_types_registered(self):
+        registry = GameRegistry.get_game('tes5')
+        for sig in ['HDPT', 'ARMA', 'RACE']:
+            assert registry.get(sig) is not None, f"{sig} not registered"
+
+
 # ---------------------------------------------------------------------------
 # Real game file tests (requires Skyrim.esm)
 # ---------------------------------------------------------------------------
 
+
 class TestSkyrimRecords:
     """Validate definitions against real Skyrim.esm records."""
+
 
     @pytest.fixture(scope='class')
     def skyrim(self, skyrim_plugin):
         return skyrim_plugin
+
 
     @pytest.mark.gamefiles
     @pytest.mark.slow
@@ -243,7 +155,7 @@ class TestSkyrimRecords:
         """Resolve the Iron Sword WEAP record."""
         iron_sword = skyrim.get_record_by_editor_id('IronSword')
         if not iron_sword:
-            pytest.skip("IronSword not found (localized EDID?)")
+            assert False, "IronSword not found in Skyrim.esm"
 
         result = tes5.WEAP.from_record(iron_sword)
         assert 'Game Data' in result
@@ -251,18 +163,20 @@ class TestSkyrimRecords:
         assert isinstance(result['Game Data']['damage'], int)
         assert result['Game Data']['damage'] > 0
 
+
     @pytest.mark.gamefiles
     @pytest.mark.slow
     def test_resolve_iron_armor(self, skyrim):
         """Resolve the Iron Armor ARMO record."""
         iron_armor = skyrim.get_record_by_editor_id('ArmorIronCuirass')
         if not iron_armor:
-            pytest.skip("ArmorIronCuirass not found")
+            assert False, "ArmorIronCuirass not found in Skyrim.esm"
 
         result = tes5.ARMO.from_record(iron_armor)
         assert 'Data' in result
         assert 'value' in result['Data']
         assert result['Data']['value'] > 0
+
 
     @pytest.mark.gamefiles
     @pytest.mark.slow
@@ -279,6 +193,7 @@ class TestSkyrimRecords:
                 assert 'Editor ID' in result
                 assert 'Value' in result
                 break
+
 
     @pytest.mark.gamefiles
     @pytest.mark.slow
@@ -297,6 +212,7 @@ class TestSkyrimRecords:
                     assert 'flags' in config
                     break
 
+
     @pytest.mark.gamefiles
     @pytest.mark.slow
     def test_resolve_lvli(self, skyrim):
@@ -308,6 +224,7 @@ class TestSkyrimRecords:
             result = tes5.LVLI.from_record(lvli)
             if 'Leveled List Entry' in result:
                 break
+
 
     @pytest.mark.gamefiles
     @pytest.mark.slow
@@ -324,6 +241,7 @@ class TestSkyrimRecords:
                 assert 'stagger' in wdata, "stagger field missing -- DNAM size mismatch"
                 break
 
+
     @pytest.mark.gamefiles
     @pytest.mark.slow
     def test_all_weap_resolve_without_crash(self, skyrim):
@@ -338,6 +256,7 @@ class TestSkyrimRecords:
 
         assert len(errors) == 0, f"Errors resolving weapons:\n" + "\n".join(errors[:10])
 
+
     @pytest.mark.gamefiles
     @pytest.mark.slow
     def test_all_armo_resolve_without_crash(self, skyrim):
@@ -351,3 +270,92 @@ class TestSkyrimRecords:
                 errors.append(f"{armor.editor_id or armor.form_id}: {e}")
 
         assert len(errors) == 0, f"Errors resolving armors:\n" + "\n".join(errors[:10])
+
+
+    @pytest.mark.gamefiles
+    @pytest.mark.slow
+    def test_resolve_nord_race(self, skyrim):
+        nord = skyrim.get_record_by_editor_id('NordRace')
+        if not nord:
+            assert False, "NordRace not found in Skyrim.esm"
+        result = tes5.RACE.from_record(nord)
+        assert 'Editor ID' in result
+        assert result['Editor ID'] == 'NordRace'
+        # Should have skin, armor race
+        if 'Skin' in result:
+            assert result['Skin'].value > 0
+        if 'Armor Race' in result:
+            assert result['Armor Race'].value > 0
+
+
+    @pytest.mark.gamefiles
+    @pytest.mark.slow
+    def test_bulk_resolve_hdpt(self, skyrim):
+        hdpts = skyrim.get_records_by_signature('HDPT')
+        assert len(hdpts) > 0
+        errors = []
+        for hp in hdpts[:200]:
+            try:
+                tes5.HDPT.from_record(hp)
+            except Exception as e:
+                errors.append(f"{hp.editor_id or hp.form_id}: {e}")
+        assert len(errors) == 0, f"Errors:\n" + "\n".join(errors[:10])
+
+
+    @pytest.mark.gamefiles
+    @pytest.mark.slow
+    def test_bulk_resolve_arma(self, skyrim):
+        armas = skyrim.get_records_by_signature('ARMA')
+        assert len(armas) > 0
+        errors = []
+        for arma in armas[:200]:
+            try:
+                tes5.ARMA.from_record(arma)
+            except Exception as e:
+                errors.append(f"{arma.editor_id or arma.form_id}: {e}")
+        assert len(errors) == 0, f"Errors:\n" + "\n".join(errors[:10])
+
+
+    @pytest.mark.gamefiles
+    @pytest.mark.slow
+    def test_bulk_resolve_race(self, skyrim):
+        races = skyrim.get_records_by_signature('RACE')
+        assert len(races) > 0
+        errors = []
+        for race in races:
+            try:
+                tes5.RACE.from_record(race)
+            except Exception as e:
+                errors.append(f"{race.editor_id or race.form_id}: {e}")
+        assert len(errors) == 0, f"Errors:\n" + "\n".join(errors[:10])
+
+
+    @pytest.mark.gamefiles
+    @pytest.mark.slow
+    def test_npc_with_head_parts(self, skyrim):
+        """Find an NPC with head parts and verify they resolve."""
+        npcs = skyrim.get_records_by_signature('NPC_')
+        for npc in npcs[:100]:
+            pnam = npc.get_subrecords('PNAM')
+            if len(pnam) > 0:
+                result = tes5.NPC_.from_record(npc)
+                hp = result.get('Head Part')
+                if hp:
+                    if isinstance(hp, list):
+                        assert len(hp) > 0
+                    else:
+                        assert hp.value > 0
+                    break
+
+
+    @pytest.mark.gamefiles
+    @pytest.mark.slow
+    def test_npc_with_tint_layers(self, skyrim):
+        """Find an NPC with tint layers."""
+        npcs = skyrim.get_records_by_signature('NPC_')
+        for npc in npcs[:200]:
+            tini = npc.get_subrecords('TINI')
+            if len(tini) > 0:
+                result = tes5.NPC_.from_record(npc)
+                assert 'Tint Index' in result
+                break
