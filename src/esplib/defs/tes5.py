@@ -1021,6 +1021,8 @@ NPC_ = EspRecord.new('NPC_', 'Non-Player Character', [
     # Packages (repeating)
     EspSubRecord.new('PKID', 'Package',
                      EspFormID.new('package', ['PACK'])),
+    common.KSIZ,
+    common.KWDA,
     EspSubRecord.new('CNAM', 'Class',
                      EspFormID.new('class_', ['CLAS'])),
     common.FULL,
@@ -1067,8 +1069,6 @@ NPC_ = EspRecord.new('NPC_', 'Non-Player Character', [
         EspInteger.new('magicka', IntType.U16),
         EspInteger.new('stamina', IntType.U16),
     ])),
-    common.KSIZ,
-    common.KWDA,
     EspSubRecord.new('WNAM', 'Worn Armor',
                      EspFormID.new('worn_armor', ['ARMO'])),
     EspSubRecord.new('ANAM', 'Far Away Model',
@@ -1113,19 +1113,10 @@ NPC_ = EspRecord.new('NPC_', 'Non-Player Character', [
         EspInteger.new('eyes', IntType.U32),
         EspInteger.new('mouth', IntType.U32),
     ])),
-    # Tint layers (repeating set)
-    EspSubRecord.new('TINI', 'Tint Index',
-                     EspInteger.new('index', IntType.U16)),
-    EspSubRecord.new('TINC', 'Tint Color', EspStruct.new('color', [
-        EspInteger.new('red', IntType.U8),
-        EspInteger.new('green', IntType.U8),
-        EspInteger.new('blue', IntType.U8),
-        EspInteger.new('alpha', IntType.U8),
-    ])),
-    EspSubRecord.new('TINV', 'Tint Interpolation Value',
-                     EspInteger.new('value', IntType.S32)),
-    EspSubRecord.new('TIAS', 'Tint Preset',
-                     EspInteger.new('preset', IntType.S16)),
+    # Tint layers (TINI/TINC/TINV/TIAS) are NOT in the schema because
+    # they're a repeating interleaved set. Auto-sort would group all TINIs
+    # together, breaking xEdit. They're handled manually and appended
+    # after the schema-sorted subrecords.
 ])
 
 
