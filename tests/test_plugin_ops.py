@@ -585,6 +585,114 @@ class TestPluginSetSynthetic:
         assert loaded == 1
 
 
+    def test_iter_yields_plugins_in_order(self, tmp_path):
+        """__iter__ yields loaded Plugin objects in load order."""
+        from esplib import LoadOrder, PluginSet
+
+        edid = make_subrecord('EDID', b'Test\x00')
+        _make_test_plugin('A.esm', [], [('MISC', 0x800, edid)], tmp_path)
+        _make_test_plugin('B.esp', ['A.esm'], [('MISC', 0x801, edid)], tmp_path)
+        _make_test_plugin('C.esp', ['A.esm'], [('MISC', 0x802, edid)], tmp_path)
+
+        lo = LoadOrder.from_list(['A.esm', 'B.esp', 'C.esp'], data_dir=tmp_path)
+        ps = PluginSet(lo)
+        ps.load_all()
+
+        plugins = list(ps)
+        assert len(plugins) == 3
+        assert plugins[0].file_path.name == 'A.esm'
+        assert plugins[1].file_path.name == 'B.esp'
+        assert plugins[2].file_path.name == 'C.esp'
+
+
+    def test_iter_skips_missing(self, tmp_path):
+        """__iter__ skips plugins that failed to load."""
+        from esplib import LoadOrder, PluginSet
+
+        edid = make_subrecord('EDID', b'Test\x00')
+        _make_test_plugin('Real.esm', [], [('MISC', 0x800, edid)], tmp_path)
+
+        lo = LoadOrder.from_list(['Real.esm', 'Missing.esp'], data_dir=tmp_path)
+        ps = PluginSet(lo)
+        ps.load_all()
+
+        plugins = list(ps)
+        assert len(plugins) == 1
+        assert plugins[0].file_path.name == 'Real.esm'
+
+
+    def test_resolve_reference(self, tmp_path):
+        """resolve_reference reads a FormID subrecord and finds the target."""
+        from esplib import LoadOrder, PluginSet
+
+        # Master with a race and an NPC that references it via RNAM
+        race_edid = make_subrecord('EDID', b'NordRace\x00')
+        npc_edid = make_subrecord('EDID', b'TestNPC\x00')
+        # RNAM points to FormID 0x00000800 (the race, in master index 0)
+        npc_rnam = make_subrecord('RNAM', struct.pack('<I', 0x00000800))
+
+        _make_test_plugin('Master.esm', [], [
+            ('RACE', 0x00000800, race_edid),
+            ('NPC_', 0x00000801, npc_edid + npc_rnam),
+        ], tmp_path)
+
+        lo = LoadOrder.from_list(['Master.esm'], data_dir=tmp_path)
+        ps = PluginSet(lo)
+        ps.load_all()
+
+        npc = ps.get_plugin('Master.esm').get_record_by_editor_id('TestNPC')
+        assert npc is not None
+
+        race = ps.resolve_reference(npc, 'RNAM')
+        assert race is not None
+        assert race.editor_id == 'NordRace'
+
+
+    def test_resolve_reference_cross_plugin(self, tmp_path):
+        """resolve_reference works across plugin boundaries."""
+        from esplib import LoadOrder, PluginSet
+
+        race_edid = make_subrecord('EDID', b'NordRace\x00')
+        _make_test_plugin('Master.esm', [], [
+            ('RACE', 0x00000800, race_edid),
+        ], tmp_path)
+
+        npc_edid = make_subrecord('EDID', b'TestNPC\x00')
+        # RNAM with master index 0 -> Master.esm's record 0x800
+        npc_rnam = make_subrecord('RNAM', struct.pack('<I', 0x00000800))
+        _make_test_plugin('Mod.esp', ['Master.esm'], [
+            ('NPC_', 0x01000900, npc_edid + npc_rnam),
+        ], tmp_path)
+
+        lo = LoadOrder.from_list(['Master.esm', 'Mod.esp'], data_dir=tmp_path)
+        ps = PluginSet(lo)
+        ps.load_all()
+
+        npc = ps.get_plugin('Mod.esp').get_record_by_editor_id('TestNPC')
+        assert npc is not None
+
+        race = ps.resolve_reference(npc, 'RNAM')
+        assert race is not None
+        assert race.editor_id == 'NordRace'
+
+
+    def test_resolve_reference_missing_subrecord(self, tmp_path):
+        """resolve_reference returns None when subrecord is absent."""
+        from esplib import LoadOrder, PluginSet
+
+        edid = make_subrecord('EDID', b'TestNPC\x00')
+        _make_test_plugin('M.esm', [], [
+            ('NPC_', 0x00000800, edid),
+        ], tmp_path)
+
+        lo = LoadOrder.from_list(['M.esm'], data_dir=tmp_path)
+        ps = PluginSet(lo)
+        ps.load_all()
+
+        npc = ps.get_plugin('M.esm').get_record_by_editor_id('TestNPC')
+        assert ps.resolve_reference(npc, 'RNAM') is None
+
+
 class TestPluginSetSkyrim:
 
 

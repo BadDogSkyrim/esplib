@@ -153,6 +153,16 @@ WEAP = EspRecord.new('WEAP', 'Weapon', [
                      EspFormID.new('template', ['WEAP'])),
 ])
 
+# -- Bodypart flags for BOD2/ARMA --
+BodypartFlags = EspFlags.new({
+    0: 'Head', 1: 'Hair', 2: 'Body', 3: 'Hands',
+    4: 'Forearms', 5: 'Amulet', 6: 'Ring', 7: 'Feet',
+    8: 'Calves', 9: 'Shield', 10: 'Tail',
+    11: 'Long Hair', 12: 'Circlet', 13: 'Ears',
+    20: 'Decapitate Head', 21: 'Decapitate',
+    30: 'FX01',
+})
+
 ARMO = EspRecord.new('ARMO', 'Armor', [
     common.EDID,
     common.VMAD,
@@ -188,7 +198,7 @@ ARMO = EspRecord.new('ARMO', 'Armor', [
                          EspString.new('message_icon', 'zstring')),
     ]),
     EspSubRecord.new('BOD2', 'Body Template', EspStruct.new('bod2', [
-        EspInteger.new('first_person_flags', IntType.U32),
+        EspInteger.new('first_person_flags', IntType.U32, formatter=BodypartFlags),
         EspInteger.new('armor_type', IntType.U32,
                        formatter=common.ArmorTypeEnum),
     ])),
@@ -477,16 +487,6 @@ RaceFlags = EspFlags.new({
     22: 'No Knockdowns', 23: 'Allow Pickpocket',
     28: 'Can Pickup Items', 30: 'Can Dual Wield',
     31: 'Avoids Roads',
-})
-
-# -- Bodypart flags for BOD2/ARMA --
-BodypartFlags = EspFlags.new({
-    0: 'Head', 1: 'Hair', 2: 'Body', 3: 'Hands',
-    4: 'Forearms', 5: 'Amulet', 6: 'Ring', 7: 'Feet',
-    8: 'Calves', 9: 'Shield', 10: 'Tail',
-    11: 'Long Hair', 12: 'Circlet', 13: 'Ears',
-    20: 'Decapitate Head', 21: 'Decapitate',
-    30: 'FX01',
 })
 
 HDPT = EspRecord.new('HDPT', 'Head Part', [

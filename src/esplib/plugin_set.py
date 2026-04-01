@@ -55,6 +55,7 @@ class PluginSet:
 
     def __init__(self, load_order: LoadOrder):
         self.load_order = load_order
+        self.string_search_dirs: List[str] = []
         self._plugins: Dict[str, Optional[Plugin]] = {}
         self._loaded_full: Dict[str, bool] = {}
         # FormID -> list of (plugin_name, record) in load order
@@ -80,7 +81,9 @@ class PluginSet:
             return None
 
         try:
-            plugin = Plugin(path)
+            plugin = Plugin()
+            plugin.string_search_dirs = list(self.string_search_dirs)
+            plugin.load(path)
             self._plugins[name] = plugin
             self._loaded_full[name] = True
             # Invalidate override index when new plugin loaded
@@ -196,6 +199,30 @@ class PluginSet:
         if chain and len(chain) > 0:
             return chain[-1]  # Winner
         return None
+
+    def resolve_reference(self, record: Record,
+                          subrecord_sig: str) -> Optional[Record]:
+        """Resolve a FormID subrecord to the record it references.
+
+        Reads the FormID from the named subrecord on `record`, then
+        resolves it through the override chain to the winning record.
+        Returns None if the subrecord is missing or the target is not found.
+        """
+        sr = record.get_subrecord(subrecord_sig)
+        if sr is None:
+            return None
+        form_id = sr.get_form_id()
+        source_plugin = getattr(record, '_plugin', None)
+        if source_plugin is None:
+            return None
+        return self.resolve_form_id(form_id, source_plugin)
+
+    def __iter__(self):
+        """Iterate over loaded plugins in load order."""
+        for name in self.load_order:
+            plugin = self._plugins.get(name)
+            if plugin is not None:
+                yield plugin
 
     def __len__(self) -> int:
         return sum(1 for p in self._plugins.values() if p is not None)

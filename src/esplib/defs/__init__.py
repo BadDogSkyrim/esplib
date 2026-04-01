@@ -9,6 +9,7 @@ from .types import (
 )
 from .context import EspContext
 from .game import GameRegistry
+from . import tes5 as _tes5  # noqa: F401 -- triggers auto-registration
 
 __all__ = [
     'IntType',
