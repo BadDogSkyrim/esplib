@@ -146,6 +146,7 @@ class Plugin:
         self.string_search_dirs: list = []  # Additional dirs to search for .STRINGS files
 
         # Indexes for fast lookups
+        self._new_records: List[Record] = []  # Records created by add_record with fresh FormIDs
         self._form_id_index: Dict[int, Record] = {}
         self._editor_id_index: Dict[str, Record] = {}
         self._signature_index: Dict[str, List[Record]] = {}
@@ -208,7 +209,7 @@ class Plugin:
     def _link_records(self) -> None:
         """Set back-references so records can resolve localized strings."""
         for record in self.records:
-            record._plugin = self
+            record.plugin = self
 
     def _load_string_tables(self) -> None:
         """Load string tables if the plugin is localized."""
@@ -288,6 +289,7 @@ class Plugin:
     def add_record(self, record: Record, group_signature: Optional[str] = None) -> None:
         if record.form_id.value == 0:
             record.form_id = self.get_next_form_id()
+            self._new_records.append(record)
         if record.version == 40 and self._game_registry:
             # Set record version to match the game (40 is the default)
             record.version = self._RECORD_VERSIONS.get(
@@ -443,7 +445,7 @@ class Plugin:
                     source_plugin: Optional['Plugin'] = None) -> 'Record':
         """Deep-copy a record into this plugin.
 
-        If source_plugin is provided (or the record has a _plugin
+        If source_plugin is provided (or the record has a plugin
         back-reference), automatically adds required masters.
 
         When copying from a localized plugin into a non-localized one,
@@ -451,7 +453,7 @@ class Plugin:
 
         Returns the new record.
         """
-        source = source_plugin or getattr(record, '_plugin', None)
+        source = source_plugin or record.plugin
         if source is not None:
             self.add_recursive_masters(source)
 
@@ -478,13 +480,29 @@ class Plugin:
                     sr.modified = True
 
     def get_next_form_id(self) -> FormID:
+        local_index = len(self.header.masters)
         max_object_id = self.header.next_object_id - 1
         for record in self.records:
-            if record.form_id.file_index == 0:
+            if record.form_id.file_index == local_index:
                 max_object_id = max(max_object_id, record.form_id.object_index)
         next_id = max_object_id + 1
         self.header.next_object_id = next_id + 1
-        return FormID(next_id)
+        return FormID((local_index << 24) | next_id)
+
+    def _reindex_local_form_ids(self) -> None:
+        """Fix file_index on local records after masters were added.
+
+        When new records are created via add_record, they get a FormID
+        with file_index = len(masters) at that time. If copy_record
+        later adds more masters, the file_index becomes stale. This
+        method updates all local records to use the current local index.
+        """
+        local_index = len(self.header.masters)
+
+        for record in self._new_records:
+            if record.form_id.file_index != local_index:
+                record.form_id = FormID(
+                    (local_index << 24) | record.form_id.object_index)
 
     def _count_records_and_groups(self) -> int:
         """Count all records and groups (HEDR num_records includes both)."""
@@ -509,6 +527,10 @@ class Plugin:
 
         if not self.file_path:
             raise PluginError("No file path specified for saving")
+
+        # Re-index local records: if masters were added after FormID
+        # assignment, the file_index byte may point to a stale slot.
+        self._reindex_local_form_ids()
 
         # Update header record count (includes both records and groups)
         self.header.num_records = self._count_records_and_groups()

@@ -212,7 +212,7 @@ class PluginSet:
         if sr is None:
             return None
         form_id = sr.get_form_id()
-        source_plugin = getattr(record, '_plugin', None)
+        source_plugin = record.plugin
         if source_plugin is None:
             return None
         return self.resolve_form_id(form_id, source_plugin)

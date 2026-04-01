@@ -272,7 +272,7 @@ class Record:
         # Cache for resolved subrecord values
         self._resolved_cache: dict = {}
         # Back-reference to owning Plugin (set by Plugin._link_records)
-        self._plugin = None
+        self.plugin = None
 
     @property
     def is_compressed(self) -> bool:
@@ -301,9 +301,9 @@ class Record:
         full = self.get_subrecord("FULL")
         if not full:
             return None
-        if full.size == 4 and self._plugin and self._plugin.is_localized:
+        if full.size == 4 and self.plugin and self.plugin.is_localized:
             string_id = full.get_uint32()
-            resolved = self._plugin.resolve_string(string_id)
+            resolved = self.plugin.resolve_string(string_id)
             if resolved is not None:
                 return resolved
             return None

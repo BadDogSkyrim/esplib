@@ -311,7 +311,7 @@ class TestStructCopyDelocalization:
         rec = Record('WEAP', FormID(0x100), 0)
         rec.add_subrecord('EDID', b'IronSword\x00')
         rec.add_subrecord('FULL', struct.pack('<I', 42))
-        rec._plugin = source
+        rec.plugin = source
 
         dest = Plugin.new_plugin(Path(tempfile.mkdtemp()) / 'Patch.esp',
                                  masters=['Localized.esm'])
@@ -328,7 +328,7 @@ class TestStructCopyDelocalization:
         rec = Record('NPC_', FormID(0x100), 0)
         rec.add_subrecord('EDID', b'TestNPC\x00')
         rec.add_subrecord('SHRT', struct.pack('<I', 99))
-        rec._plugin = source
+        rec.plugin = source
 
         dest = Plugin.new_plugin(Path(tempfile.mkdtemp()) / 'Patch.esp',
                                  masters=['Localized.esm'])
@@ -344,7 +344,7 @@ class TestStructCopyDelocalization:
 
         rec = Record('WEAP', FormID(0x100), 0)
         rec.add_subrecord('FULL', struct.pack('<I', 42))
-        rec._plugin = source
+        rec.plugin = source
 
         dest = Plugin.new_plugin(Path(tempfile.mkdtemp()) / 'Patch.esm')
         dest.header.is_localized = True
