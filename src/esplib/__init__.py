@@ -15,6 +15,7 @@ from .helpers import (
     flst_forms, flst_contains, flst_add, flst_remove,
     glob_value, glob_set_value, glob_copy_as,
 )
+from .vmad import VmadData, VmadScript, VmadProperty, VmadObject
 
 __version__ = "0.2.0"
 __all__ = [
@@ -28,4 +29,5 @@ __all__ = [
     "PluginError", "ParseError", "ValidationError", "FormIDError",
     "flst_forms", "flst_contains", "flst_add", "flst_remove",
     "glob_value", "glob_set_value", "glob_copy_as",
+    "VmadData", "VmadScript", "VmadProperty", "VmadObject",
 ]

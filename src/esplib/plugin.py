@@ -441,6 +441,27 @@ class Plugin:
     # Subrecord signatures that contain localized string IDs
     _LOCALIZED_STRING_SIGS = {'FULL', 'SHRT', 'DESC', 'NNAM', 'ITXT'}
 
+    # Subrecord signatures that are a single FormID (4 bytes).
+    # When copying a record between plugins, these need their master
+    # index byte remapped. This covers standalone FormID subrecords;
+    # FormIDs embedded in structs (e.g. inside ACBS, DATA, DNAM) are
+    # NOT remapped here -- callers must handle those if needed.
+    _FORMID_SUBRECORD_SIGS = frozenset({
+        # Common
+        'LNAM', 'KWDA',
+        # NPC_
+        'RNAM', 'PNAM', 'DOFT', 'FTST', 'TPLT', 'ZNAM', 'WNAM',
+        'INAM', 'VTCK', 'CNAM', 'ECOR', 'SPLO',
+        # RACE
+        'RPRM', 'RPRF', 'AHCM', 'AHCF', 'FTSM', 'FTSF',
+        'DFTM', 'DFTF', 'MPAI', 'TIND', 'TINC', 'HEAD', 'NAM8',
+        # ARMA / ARMO
+        'MODL',
+        # Misc FormID refs
+        'EITM', 'BAMT', 'BIDS', 'ETYP', 'NAM4', 'NAM5',
+        'YNAM', 'CRDT', 'EFID',
+    })
+
     def copy_record(self, record: 'Record',
                     source_plugin: Optional['Plugin'] = None) -> 'Record':
         """Deep-copy a record into this plugin.
@@ -459,6 +480,14 @@ class Plugin:
 
         new_record = record.copy()
 
+        if source is not None:
+            # Remap the record's own FormID
+            new_record.form_id = FormID(
+                self.remap_formid(record.form_id.value, source))
+
+            # Remap FormIDs inside known subrecords
+            self._remap_subrecord_formids(new_record, source)
+
         if (source is not None and source.is_localized
                 and not self.is_localized
                 and source.string_tables):
@@ -466,6 +495,18 @@ class Plugin:
 
         self.add_record(new_record)
         return new_record
+
+    def _remap_subrecord_formids(self, record: 'Record',
+                                 source: 'Plugin') -> None:
+        """Remap master indices in subrecords that contain FormIDs."""
+        import struct as _struct
+        for sr in record.subrecords:
+            if sr.signature in self._FORMID_SUBRECORD_SIGS and sr.size == 4:
+                old_fid = sr.get_uint32()
+                new_fid = self.remap_formid(old_fid, source)
+                if new_fid != old_fid:
+                    sr.data = bytearray(_struct.pack('<I', new_fid))
+                    sr.modified = True
 
     def _delocalize_strings(self, record: 'Record',
                             source: 'Plugin') -> None:
