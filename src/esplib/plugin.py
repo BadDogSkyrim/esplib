@@ -593,7 +593,14 @@ class Plugin:
             self._remap_subrecord_formids(new_record, source)
 
         if not self.is_localized:
-            self._delocalize_strings(new_record, source, ps)
+            # Pass the original record's normalized FormID for override
+            # chain lookup — new_record.form_id is in patch master-list
+            # space which won't match the load-order-indexed chain.
+            orig_norm = None
+            if source is not None and ps is not None:
+                orig_norm = source.normalize_form_id(record.form_id)
+            self._delocalize_strings(new_record, source, ps,
+                                     chain_form_id=orig_norm)
 
         self.add_record(new_record)
         return new_record
@@ -731,7 +738,8 @@ class Plugin:
 
     def _delocalize_strings(self, record: 'Record',
                             source: Optional['Plugin'],
-                            plugin_set=None) -> None:
+                            plugin_set=None,
+                            chain_form_id=None) -> None:
         """Convert localized string IDs to inline strings.
 
         For each 4-byte string subrecord (FULL, SHRT, DESC, etc.),
@@ -740,6 +748,11 @@ class Plugin:
         plugin is localized, the value is a string ID and we resolve
         it from that plugin's string tables. Otherwise it's a real
         inline string and left alone.
+
+        chain_form_id: normalized FormID for override chain lookup.
+            When copying records, the record's FormID is already in
+            the patch's master-list space and won't match the
+            load-order-indexed override chain.
         """
         import logging as _logging
         for sr in record.subrecords:
@@ -764,7 +777,8 @@ class Plugin:
             resolved = None
             chain = None
             if plugin_set is not None:
-                chain = plugin_set.get_override_chain(record.form_id)
+                lookup_fid = chain_form_id or record.form_id
+                chain = plugin_set.get_override_chain(lookup_fid)
 
             if chain:
                 # Walk chain in reverse (winner first, then back to base)
