@@ -220,29 +220,48 @@ class StringTableManager:
 
     def _load_from_bsa(self, plugin_path: Path, plugin_name: str,
                        language: str, missing: list) -> None:
-        """Try to load missing string tables from BSA archives."""
+        """Try to load missing string tables from BSA archives.
+
+        Search order:
+        1. PluginName.bsa, PluginName - Main.bsa (plugin-specific)
+        2. All BSAs in the Data directory (DLC strings are often in
+           shared BSAs like Skyrim - Interface.bsa)
+        """
         import logging
         from .bsa import BsaReader, BsaError
 
         data_dir = plugin_path.parent
-        # Try PluginName.bsa, then PluginName - Main.bsa
+
+        # Plugin-specific BSAs first
         candidates = [
             data_dir / f"{plugin_name}.bsa",
             data_dir / f"{plugin_name} - Main.bsa",
         ]
+        # Then all other BSAs in the data dir
+        if data_dir.exists():
+            for p in sorted(data_dir.glob('*.bsa')):
+                if p not in candidates:
+                    candidates.append(p)
+
+        bsa_file_key = f"strings\\{plugin_name}_{language}"
 
         for bsa_path in candidates:
             if not bsa_path.exists():
                 continue
+            if not missing:
+                break
             try:
                 with BsaReader(bsa_path) as bsa:
+                    still_missing = []
                     for table_type, attr in missing:
-                        bsa_file = (f"strings\\{plugin_name}"
-                                    f"_{language}.{table_type}")
+                        bsa_file = f"{bsa_file_key}.{table_type}"
                         if bsa.has_file(bsa_file):
                             data = bsa.read_file(bsa_file)
                             setattr(self, attr,
                                     StringTable.from_bytes(data, table_type))
+                        else:
+                            still_missing.append((table_type, attr))
+                    missing = still_missing
             except BsaError as e:
                 logging.getLogger(__name__).debug(
                     "Could not read BSA %s: %s", bsa_path.name, e)
