@@ -375,13 +375,46 @@ class EspByteArray:
         return d
 
 
+@dataclass
+class EspAlternateTextures:
+    """Alternate texture array (MO2S/MO3S/MO4S/MO5S).
+
+    Binary format: uint32 count, then repeated entries of:
+        uint32 name_length
+        char[name_length] name (null-terminated)
+        uint32 FormID (TXST reference)
+        uint32 3D index
+
+    Treated as raw bytes for round-trip, but the schema type lets
+    FormID discovery code find and remap embedded FormIDs without
+    hardcoded signature checks.
+    """
+    name: str
+
+    @classmethod
+    def new(cls, name: str) -> 'EspAlternateTextures':
+        return cls(name=name)
+
+    def from_bytes(self, reader: BinaryReader, ctx: EspContext = None,
+                   available: int = None) -> bytes:
+        if available is not None:
+            return reader.read_bytes(available)
+        return reader.read_bytes(reader.remaining())
+
+    def to_bytes(self, value: bytes) -> bytes:
+        return value
+
+    def to_dict(self) -> dict:
+        return {'type': 'alternate_textures', 'name': self.name}
+
+
 # ---------------------------------------------------------------------------
 # Composite types -- EspStruct, EspArray, EspUnion
 # ---------------------------------------------------------------------------
 
 # Type alias for any value definition
 ValueDef = Union[EspInteger, EspFloat, EspString, EspFormID, EspByteArray,
-                 'EspStruct', 'EspArray', 'EspUnion']
+                 EspAlternateTextures, 'EspStruct', 'EspArray', 'EspUnion']
 
 
 @dataclass

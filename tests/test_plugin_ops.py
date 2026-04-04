@@ -172,7 +172,8 @@ class TestPluginCopyRecord:
 
         assert copied.editor_id == 'TestSword'
         assert len(target.records) == 1
-        assert 'Skyrim.esm' in target.header.masters
+        # Only source.esp is added as master — Skyrim.esm is not
+        # referenced by any FormID in the copied record
         assert 'source.esp' in target.header.masters
 
 
@@ -811,6 +812,198 @@ class TestRemapFormIDGamefiles:
 
         assert (remapped >> 24) & 0xFF == 1
         assert remapped & 0x00FFFFFF == 0x013746
+
+
+# ===================================================================
+# Copy with PluginSet (normalize/denormalize)
+# ===================================================================
+
+
+class TestCopyRecordPluginSet:
+    """copy_record with PluginSet correctly remaps FormIDs via
+    normalize/denormalize, including struct-embedded FormIDs like
+    SNAM (faction+rank) and CNTO (item+count).
+
+    Regression: CC plugin NPCs had unresolved FormIDs because the
+    source plugin was missing from the load order.
+    """
+
+
+    def _make_cc_npc(self, cc_plugin):
+        """Create a synthetic NPC with subrecords that contain FormIDs
+        pointing to records local to the CC plugin (file_index = len(masters)).
+        """
+        local_fi = len(cc_plugin.header.masters)
+
+        rec = Record('NPC_', FormID((local_fi << 24) | 0x0009B8), 0)
+        rec.schema = cc_plugin._game_registry.get('NPC_')
+        rec.plugin = cc_plugin
+
+        # EDID
+        rec.add_subrecord('EDID', b'TestCCNPC\x00')
+
+        # SNAM — struct: FormID(4) + rank(1) + unused(3) = 8 bytes
+        faction_fid = (local_fi << 24) | 0x00083D
+        rec.add_subrecord('SNAM', struct.pack('<IbBBB', faction_fid, 0, 0, 0, 0))
+
+        # TPLT — simple FormID
+        template_fid = (local_fi << 24) | 0x0009B7
+        rec.add_subrecord('TPLT', struct.pack('<I', template_fid))
+
+        # CNTO — struct: FormID(4) + count(4) = 8 bytes
+        # First item: local to CC plugin
+        item_local = (local_fi << 24) | 0x0009DB
+        rec.add_subrecord('CNTO', struct.pack('<Ii', item_local, 1))
+
+        # Second item: from Skyrim.esm (master index 0)
+        item_skyrim = (0 << 24) | 0x037C2B
+        rec.add_subrecord('CNTO', struct.pack('<Ii', item_skyrim, 3))
+
+        # DOFT — simple FormID
+        outfit_fid = (local_fi << 24) | 0x000A00
+        rec.add_subrecord('DOFT', struct.pack('<I', outfit_fid))
+
+        cc_plugin.add_record(rec)
+        return rec
+
+
+    def test_cc_npc_formids_remapped_correctly(self, tmp_path):
+        """All FormIDs (simple + struct) in a CC-like NPC are correctly
+        remapped when copied via PluginSet."""
+        from esplib import PluginSet, LoadOrder
+
+        # Simulate a CC plugin with 5 masters (like ccBGSSSE025)
+        cc_path = tmp_path / 'ccTest.esm'
+        cc = Plugin.new_plugin(cc_path, masters=[
+            'Skyrim.esm', 'Update.esm', 'Dawnguard.esm',
+            'HearthFires.esm', 'Dragonborn.esm',
+        ])
+        npc = self._make_cc_npc(cc)
+
+        # Build a load order that includes the CC plugin
+        lo = LoadOrder.from_list([
+            'Skyrim.esm', 'Update.esm', 'Dawnguard.esm',
+            'HearthFires.esm', 'Dragonborn.esm',
+            'ccTest.esm',
+        ], data_dir=tmp_path)
+
+        # Save the CC plugin so PluginSet can load it
+        cc.save()
+
+        ps = PluginSet(lo)
+        ps.load_all()
+        cc_loaded = ps.get_plugin('ccTest.esm')
+        assert cc_loaded is not None
+
+        npc_rec = None
+        for r in cc_loaded.get_records_by_signature('NPC_'):
+            if r.editor_id == 'TestCCNPC':
+                npc_rec = r
+                break
+        assert npc_rec is not None
+
+        # Create patch and copy
+        patch = Plugin.new_plugin(tmp_path / 'Patch.esp')
+        patch.plugin_set = ps
+
+        patched = patch.copy_record(npc_rec, plugin_set=ps)
+
+        # Verify: ccTest.esm should be a master of the patch
+        cc_master_idx = None
+        for i, m in enumerate(patch.header.masters):
+            if m.lower() == 'cctest.esm':
+                cc_master_idx = i
+                break
+        assert cc_master_idx is not None, \
+            f"ccTest.esm not in patch masters: {patch.header.masters}"
+
+        skyrim_idx = None
+        for i, m in enumerate(patch.header.masters):
+            if m.lower() == 'skyrim.esm':
+                skyrim_idx = i
+                break
+        assert skyrim_idx is not None
+
+        # Record-level FormID should point to CC plugin
+        assert patched.form_id.file_index == cc_master_idx
+        assert patched.form_id.object_index == 0x0009B8
+
+        # SNAM faction (struct offset 0) -> CC plugin
+        snam = patched.get_subrecord('SNAM')
+        snam_fid = struct.unpack_from('<I', snam.data, 0)[0]
+        assert (snam_fid >> 24) == cc_master_idx
+        assert (snam_fid & 0x00FFFFFF) == 0x00083D
+
+        # TPLT -> CC plugin
+        tplt = patched.get_subrecord('TPLT')
+        tplt_fid = struct.unpack_from('<I', tplt.data, 0)[0]
+        assert (tplt_fid >> 24) == cc_master_idx
+        assert (tplt_fid & 0x00FFFFFF) == 0x0009B7
+
+        # CNTO[0] item -> CC plugin
+        cntos = patched.get_subrecords('CNTO')
+        cnto0_fid = struct.unpack_from('<I', cntos[0].data, 0)[0]
+        assert (cnto0_fid >> 24) == cc_master_idx
+        assert (cnto0_fid & 0x00FFFFFF) == 0x0009DB
+
+        # CNTO[1] item -> Skyrim.esm
+        cnto1_fid = struct.unpack_from('<I', cntos[1].data, 0)[0]
+        assert (cnto1_fid >> 24) == skyrim_idx
+        assert (cnto1_fid & 0x00FFFFFF) == 0x037C2B
+
+        # DOFT -> CC plugin
+        doft = patched.get_subrecord('DOFT')
+        doft_fid = struct.unpack_from('<I', doft.data, 0)[0]
+        assert (doft_fid >> 24) == cc_master_idx
+        assert (doft_fid & 0x00FFFFFF) == 0x000A00
+
+
+    def test_cc_npc_survives_save_reload(self, tmp_path):
+        """FormIDs remain valid after save and reload."""
+        from esplib import PluginSet, LoadOrder
+
+        cc_path = tmp_path / 'ccTest.esm'
+        cc = Plugin.new_plugin(cc_path, masters=[
+            'Skyrim.esm', 'Update.esm', 'Dawnguard.esm',
+            'HearthFires.esm', 'Dragonborn.esm',
+        ])
+        self._make_cc_npc(cc)
+        cc.save()
+
+        lo = LoadOrder.from_list([
+            'Skyrim.esm', 'Update.esm', 'Dawnguard.esm',
+            'HearthFires.esm', 'Dragonborn.esm',
+            'ccTest.esm',
+        ], data_dir=tmp_path)
+        ps = PluginSet(lo)
+        ps.load_all()
+
+        cc_loaded = ps.get_plugin('ccTest.esm')
+        npc_rec = [r for r in cc_loaded.get_records_by_signature('NPC_')
+                   if r.editor_id == 'TestCCNPC'][0]
+
+        patch_path = tmp_path / 'Patch.esp'
+        patch = Plugin.new_plugin(patch_path)
+        patch.plugin_set = ps
+        patch.copy_record(npc_rec, plugin_set=ps)
+        patch.save()
+
+        # Reload and verify
+        reloaded = Plugin(patch_path)
+        npc_reloaded = [r for r in reloaded.records
+                        if r.editor_id == 'TestCCNPC'][0]
+
+        # All FormIDs must resolve to valid master indices
+        num_masters = len(reloaded.header.masters)
+        assert npc_reloaded.form_id.file_index < num_masters
+
+        for sr in npc_reloaded.subrecords:
+            if sr.signature in ('SNAM', 'TPLT', 'CNTO', 'DOFT'):
+                fid = struct.unpack_from('<I', sr.data, 0)[0]
+                fi = fid >> 24
+                assert fi < num_masters, \
+                    f"{sr.signature} FormID 0x{fid:08X} has file_index " \
+                    f"{fi} >= num_masters {num_masters}"
 
 
 # ===================================================================

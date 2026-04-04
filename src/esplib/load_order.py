@@ -36,8 +36,17 @@ class LoadOrder:
         self.game_id = game_id
 
     @classmethod
-    def from_game(cls, game_id: str) -> 'LoadOrder':
-        """Load the active load order from the game's plugins.txt."""
+    def from_game(cls, game_id: str,
+                  active_only: bool = False) -> 'LoadOrder':
+        """Load the load order from the game's plugins.txt.
+
+        If active_only is True, only include plugins marked active
+        (prefixed with '*') and implicit masters.
+
+        Creation Club plugins listed in the game's .ccc file are
+        inserted after the implicit masters, matching the game engine's
+        load order.
+        """
         game = find_game(game_id)
         if game is None:
             raise FileNotFoundError(f"Game not found: {game_id}")
@@ -47,7 +56,9 @@ class LoadOrder:
             raise FileNotFoundError(
                 f"plugins.txt not found for {game.name}")
 
-        plugins = cls._parse_plugins_txt(plugins_txt, game_id)
+        plugins = cls._parse_plugins_txt(
+            plugins_txt, game_id, active_only=active_only,
+            ccc_file=game.ccc_file(), data_dir=game.data_dir)
         return cls(plugins=plugins, data_dir=game.data_dir, game_id=game_id)
 
     @classmethod
@@ -60,16 +71,22 @@ class LoadOrder:
                    game_id=game_id)
 
     @classmethod
-    def _parse_plugins_txt(cls, path: Path, game_id: str) -> List[str]:
-        """Parse plugins.txt into an ordered list of active plugin names.
+    def _parse_plugins_txt(cls, path: Path, game_id: str,
+                           active_only: bool = False,
+                           ccc_file: Optional[Path] = None,
+                           data_dir: Optional[Path] = None) -> List[str]:
+        """Parse plugins.txt into an ordered list of plugin names.
 
         Format:
           # comments
           *active_plugin.esp     (active, loaded by game)
           inactive_plugin.esp    (inactive, not loaded)
 
-        We include inactive plugins too -- caller can filter if needed.
-        Implicit masters are prepended.
+        If active_only is True, only plugins prefixed with '*' are
+        included (plus implicit masters which are always active).
+
+        If ccc_file is provided, Creation Club plugins are inserted
+        after implicit masters (only those that exist in data_dir).
         """
         plugins = []
 
@@ -77,20 +94,38 @@ class LoadOrder:
         implicits = cls._IMPLICIT_MASTERS.get(game_id, [])
         plugins.extend(implicits)
 
+        # Add Creation Club plugins from .ccc file
+        if ccc_file is not None:
+            cc_text = ccc_file.read_text(encoding='utf-8', errors='replace')
+            for line in cc_text.splitlines():
+                name = line.strip()
+                if not name:
+                    continue
+                # Only include CC plugins that exist on disk
+                if data_dir and not (data_dir / name).exists():
+                    continue
+                if name.lower() not in [p.lower() for p in plugins]:
+                    plugins.append(name)
+
         text = path.read_text(encoding='utf-8', errors='replace')
+        already = {p.lower() for p in plugins}
         for line in text.splitlines():
             line = line.strip()
             if not line or line.startswith('#'):
                 continue
 
-            # Strip active marker
+            active = line.startswith('*')
             name = line.lstrip('*').strip()
 
-            # Skip if it's an implicit master (already added)
-            if name.lower() in [m.lower() for m in implicits]:
+            # Skip if already added (implicit master or CC plugin)
+            if name.lower() in already:
+                continue
+
+            if active_only and not active:
                 continue
 
             plugins.append(name)
+            already.add(name.lower())
 
         return plugins
 

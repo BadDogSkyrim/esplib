@@ -138,6 +138,35 @@ class VmadData:
                 return script
         return None
 
+    def remap_form_ids(self, callback) -> None:
+        """Apply *callback* to every FormID in this VMAD.
+
+        callback(form_id: int) -> int
+
+        Walks script properties (PROP_OBJECT, PROP_OBJECT_ARRAY)
+        and alias script properties + alias object references.
+        """
+
+        def _remap_properties(props):
+            for prop in props:
+                if prop.type == PROP_OBJECT and isinstance(prop.value, VmadObject):
+                    if prop.value.form_id:
+                        prop.value.form_id = callback(prop.value.form_id)
+                elif prop.type == PROP_OBJECT_ARRAY and isinstance(prop.value, list):
+                    for obj in prop.value:
+                        if isinstance(obj, VmadObject) and obj.form_id:
+                            obj.form_id = callback(obj.form_id)
+
+        for script in self.scripts:
+            _remap_properties(script.properties)
+
+        for alias in self.alias_scripts:
+            if alias.alias_obj.form_id:
+                alias.alias_obj.form_id = callback(alias.alias_obj.form_id)
+            for script in alias.scripts:
+                _remap_properties(script.properties)
+
+
     @classmethod
     def from_record(cls, record, sig: str = None) -> Optional['VmadData']:
         """Parse VMAD from a record's VMAD subrecord.

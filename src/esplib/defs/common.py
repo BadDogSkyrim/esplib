@@ -7,6 +7,7 @@ and shared variables in wbDefinitionsTES5.pas (wbEDID, wbFULL, etc.).
 from .types import (
     IntType, EspFlags, EspEnum,
     EspInteger, EspFloat, EspString, EspFormID, EspByteArray,
+    EspAlternateTextures,
     EspStruct, EspArray, EspUnion, EspSubRecord,
 )
 from .context import EspContext

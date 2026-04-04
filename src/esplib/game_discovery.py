@@ -40,6 +40,23 @@ class GameInstall:
         return None
 
 
+    # .ccc filename per game — Creation Club content list
+    _CCC_FILENAMES = {
+        'tes5': 'Skyrim.ccc',
+        'fo4': 'Fallout4.ccc',
+    }
+
+
+    def ccc_file(self) -> Optional[Path]:
+        """Path to the .ccc file (Creation Club content list) for this game."""
+        ccc_name = self._CCC_FILENAMES.get(self.game_id)
+        if ccc_name:
+            p = self.data_dir.parent / ccc_name
+            if p.exists():
+                return p
+        return None
+
+
 # Game definitions: (game_id, name, steam_appid, steam_folder_name,
 #                    exe_name, appdata_folder_name)
 _GAME_DEFS = [

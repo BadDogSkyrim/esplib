@@ -6,6 +6,7 @@ Ported from wbDefinitionsTES5.pas and wbDefinitionsCommon.pas.
 from .types import (
     IntType, EspFlags, EspEnum,
     EspInteger, EspFloat, EspString, EspFormID, EspByteArray,
+    EspAlternateTextures,
     EspStruct, EspArray, EspSubRecord, EspGroup, EspRecord,
 )
 from . import common
@@ -178,7 +179,7 @@ ARMO = EspRecord.new('ARMO', 'Armor', [
         EspSubRecord.new('MO2T', 'Male Model Texture Data',
                          EspByteArray.new('data')),
         EspSubRecord.new('MO2S', 'Male Model Alternate Textures',
-                         EspByteArray.new('data')),
+                         EspAlternateTextures.new('data')),
         EspSubRecord.new('ICON', 'Icon Image',
                          EspString.new('icon', 'zstring')),
         EspSubRecord.new('MICO', 'Message Icon',
@@ -191,7 +192,7 @@ ARMO = EspRecord.new('ARMO', 'Armor', [
         EspSubRecord.new('MO4T', 'Female Model Texture Data',
                          EspByteArray.new('data')),
         EspSubRecord.new('MO4S', 'Female Model Alternate Textures',
-                         EspByteArray.new('data')),
+                         EspAlternateTextures.new('data')),
         EspSubRecord.new('ICO2', 'Icon Image 2',
                          EspString.new('icon', 'zstring')),
         EspSubRecord.new('MIC2', 'Message Icon 2',
@@ -520,8 +521,12 @@ HDPT = EspRecord.new('HDPT', 'Head Part', [
 
 ARMA = EspRecord.new('ARMA', 'Armor Addon', [
     common.EDID,
-    EspSubRecord.new('BODT', 'Body Template (Old)',
-                     EspByteArray.new('data')),
+    EspSubRecord.new('BODT', 'Body Template (Old)', EspStruct.new('bodt', [
+        EspInteger.new('first_person_flags', IntType.U32, formatter=BodypartFlags),
+        EspInteger.new('general_flags', IntType.U32),
+        EspInteger.new('armor_type', IntType.U32,
+                       formatter=common.ArmorTypeEnum),
+    ])),
     EspSubRecord.new('BOD2', 'Body Template', EspStruct.new('bod2', [
         EspInteger.new('first_person_flags', IntType.U32, formatter=BodypartFlags),
         EspInteger.new('armor_type', IntType.U32,
@@ -540,34 +545,38 @@ ARMA = EspRecord.new('ARMA', 'Armor Addon', [
         EspFloat.new('weapon_adjust'),
     ])),
     # Biped Model (Male + Female world models)
-    EspGroup.new('Biped Model', [
+    EspGroup.new('Male World Model', [
         EspSubRecord.new('MOD2', 'Male World Model',
                          EspString.new('model', 'zstring')),
         EspSubRecord.new('MO2T', 'Male Model Texture Data',
                          EspByteArray.new('data')),
         EspSubRecord.new('MO2S', 'Male Model Alternate Textures',
-                         EspByteArray.new('data')),
+                         EspAlternateTextures.new('data')),
+    ]),
+    EspGroup.new('Female World Model', [
         EspSubRecord.new('MOD3', 'Female World Model',
                          EspString.new('model', 'zstring')),
         EspSubRecord.new('MO3T', 'Female Model Texture Data',
                          EspByteArray.new('data')),
         EspSubRecord.new('MO3S', 'Female Model Alternate Textures',
-                         EspByteArray.new('data')),
+                         EspAlternateTextures.new('data')),
     ]),
     # 1st Person Model (Male + Female)
-    EspGroup.new('1st Person', [
+    EspGroup.new('Male 1st Person', [
         EspSubRecord.new('MOD4', 'Male 1st Person Model',
                          EspString.new('model', 'zstring')),
         EspSubRecord.new('MO4T', 'Male 1st Person Texture Data',
                          EspByteArray.new('data')),
         EspSubRecord.new('MO4S', 'Male 1st Person Alternate Textures',
-                         EspByteArray.new('data')),
+                         EspAlternateTextures.new('data')),
+    ]),
+    EspGroup.new('Female 1st Person', [
         EspSubRecord.new('MOD5', 'Female 1st Person Model',
                          EspString.new('model', 'zstring')),
         EspSubRecord.new('MO5T', 'Female 1st Person Texture Data',
                          EspByteArray.new('data')),
         EspSubRecord.new('MO5S', 'Female 1st Person Alternate Textures',
-                         EspByteArray.new('data')),
+                         EspAlternateTextures.new('data')),
     ]),
     # Skin textures
     EspSubRecord.new('NAM0', 'Male Skin Texture',
@@ -908,7 +917,10 @@ QUST = EspRecord.new('QUST', 'Quest', [
                          EspByteArray.new('data')),
         EspSubRecord.new('COCT', 'Item Count',
                          EspInteger.new('count', IntType.U32)),
-        EspSubRecord.new('CNTO', 'Item', EspByteArray.new('data')),
+        EspSubRecord.new('CNTO', 'Item', EspStruct.new('item', [
+            EspFormID.new('item'),
+            EspInteger.new('count', IntType.S32),
+        ])),
         EspSubRecord.new('ECOR', 'Alias ECor',
                          EspFormID.new('ecor', [])),
         EspSubRecord.new('ALCO', 'Alias Create Object',
@@ -989,7 +1001,11 @@ NPC_ = EspRecord.new('NPC_', 'Non-Player Character', [
         EspInteger.new('bleedout_override', IntType.U16),
     ])),
     # Factions (repeating)
-    EspSubRecord.new('SNAM', 'Faction', EspByteArray.new('faction')),
+    EspSubRecord.new('SNAM', 'Faction', EspStruct.new('faction', [
+        EspFormID.new('faction', ['FACT']),
+        EspInteger.new('rank', IntType.S8),
+        EspByteArray.new('unused', size=3),
+    ])),
     # Death item
     EspSubRecord.new('INAM', 'Death Item',
                      EspFormID.new('death_item', ['LVLI'])),
@@ -1004,18 +1020,32 @@ NPC_ = EspRecord.new('NPC_', 'Non-Player Character', [
                      EspInteger.new('count', IntType.U32)),
     EspSubRecord.new('SPLO', 'Actor Effect',
                      EspFormID.new('spell', ['SPEL', 'SHOU', 'LVSP'])),
-    # Perks
-    EspSubRecord.new('PRKZ', 'Perk Count',
-                     EspInteger.new('count', IntType.U32)),
-    EspSubRecord.new('PRKR', 'Perk',
-                     EspByteArray.new('perk')),
     # Attack data
     EspSubRecord.new('ATKR', 'Attack Race',
                      EspFormID.new('attack_race', ['RACE'])),
+    EspGroup.new('Attack', [
+        EspSubRecord.new('ATKD', 'Attack Data',
+                         EspByteArray.new('data')),
+        EspSubRecord.new('ATKE', 'Attack Event',
+                         EspString.new('event', 'zstring')),
+    ]),
+    EspSubRecord.new('ECOR', 'Race Override',
+                     EspFormID.new('ecor', ['RACE'])),
+    # Perks
+    EspSubRecord.new('PRKZ', 'Perk Count',
+                     EspInteger.new('count', IntType.U32)),
+    EspSubRecord.new('PRKR', 'Perk', EspStruct.new('perk', [
+        EspFormID.new('perk', ['PERK']),
+        EspInteger.new('rank', IntType.U8),
+        EspByteArray.new('unused', size=3),
+    ])),
     # Inventory
     EspSubRecord.new('COCT', 'Item Count',
                      EspInteger.new('count', IntType.U32)),
-    EspSubRecord.new('CNTO', 'Item', EspByteArray.new('item')),
+    EspSubRecord.new('CNTO', 'Item', EspStruct.new('item', [
+        EspFormID.new('item'),
+        EspInteger.new('count', IntType.S32),
+    ])),
     # AI data
     EspSubRecord.new('AIDT', 'AI Data', EspByteArray.new('ai_data')),
     # Packages (repeating)
@@ -1087,13 +1117,15 @@ NPC_ = EspRecord.new('NPC_', 'Non-Player Character', [
     EspSubRecord.new('NAM7', 'Weight', EspFloat.new('weight')),
     EspSubRecord.new('NAM8', 'Sound Level',
                      EspInteger.new('sound_level', IntType.U32)),
+    EspSubRecord.new('CSCR', 'Inherits Sound From',
+                     EspFormID.new('sound_source', ['NPC_'])),
     # Outfits
     EspSubRecord.new('DOFT', 'Default Outfit',
                      EspFormID.new('default_outfit', ['OTFT'])),
-    EspSubRecord.new('DPLT', 'Default Package List',
-                     EspFormID.new('default_package_list', ['FLST'])),
     EspSubRecord.new('SOFT', 'Sleep Outfit',
                      EspFormID.new('sleep_outfit', ['OTFT'])),
+    EspSubRecord.new('DPLT', 'Default Package List',
+                     EspFormID.new('default_package_list', ['FLST'])),
     EspSubRecord.new('CRIF', 'Crime Faction',
                      EspFormID.new('crime_faction', ['FACT'])),
     EspSubRecord.new('FTST', 'Head Texture',

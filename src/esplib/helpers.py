@@ -15,9 +15,22 @@ from .utils import FormID
 # ---------------------------------------------------------------------------
 
 def flst_forms(record: Record) -> List[FormID]:
-    """Get all FormIDs in a FormList record."""
-    return [FormID(sr.get_uint32()) for sr in record.subrecords
-            if sr.signature == 'LNAM']
+    """Get all FormIDs in a FormList record.
+
+    If the record's plugin is part of a PluginSet, FormIDs are
+    normalized to load-order space so callers don't need to know
+    which plugin's master-list they came from.
+    """
+    plugin = record.plugin
+    normalize = (plugin is not None and plugin.plugin_set is not None)
+    result = []
+    for sr in record.subrecords:
+        if sr.signature == 'LNAM':
+            fid = FormID(sr.get_uint32())
+            if normalize:
+                fid = plugin.normalize_form_id(fid)
+            result.append(fid)
+    return result
 
 
 def flst_contains(record: Record, form_id: Union[FormID, int]) -> bool:
