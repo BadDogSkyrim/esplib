@@ -190,23 +190,70 @@ class StringTableManager:
         Searches for files like Skyrim_english.STRINGS in:
         1. The Strings/ subdirectory next to the plugin
         2. Any additional directories in search_dirs
+        3. BSA archives matching the plugin name (e.g. PluginName.bsa)
         """
         plugin_name = plugin_path.stem
         dirs = [plugin_path.parent / 'Strings']
         if search_dirs:
             dirs.extend(Path(d) for d in search_dirs)
 
-        for table_type, attr in [
+        tables = [
             (StringTable.STRINGS, 'strings'),
             (StringTable.DLSTRINGS, 'dlstrings'),
             (StringTable.ILSTRINGS, 'ilstrings'),
-        ]:
+        ]
+
+        # Step 1-2: search extracted string files on disk
+        for table_type, attr in tables:
             filename = f"{plugin_name}_{language}.{table_type}"
             for d in dirs:
                 filepath = d / filename
                 if filepath.exists():
                     setattr(self, attr, StringTable.from_file(filepath, table_type))
                     break
+
+        # Step 3: if any tables are still missing, try BSA
+        missing = [(tt, attr) for tt, attr in tables
+                   if getattr(self, attr) is None]
+        if missing:
+            self._load_from_bsa(plugin_path, plugin_name, language, missing)
+
+    def _load_from_bsa(self, plugin_path: Path, plugin_name: str,
+                       language: str, missing: list) -> None:
+        """Try to load missing string tables from BSA archives."""
+        import logging
+        from .bsa import BsaReader, BsaError
+
+        data_dir = plugin_path.parent
+        # Try PluginName.bsa, then PluginName - Main.bsa
+        candidates = [
+            data_dir / f"{plugin_name}.bsa",
+            data_dir / f"{plugin_name} - Main.bsa",
+        ]
+
+        for bsa_path in candidates:
+            if not bsa_path.exists():
+                continue
+            try:
+                with BsaReader(bsa_path) as bsa:
+                    for table_type, attr in missing:
+                        bsa_file = (f"strings\\{plugin_name}"
+                                    f"_{language}.{table_type}")
+                        if bsa.has_file(bsa_file):
+                            data = bsa.read_file(bsa_file)
+                            setattr(self, attr,
+                                    StringTable.from_bytes(data, table_type))
+            except BsaError as e:
+                logging.getLogger(__name__).debug(
+                    "Could not read BSA %s: %s", bsa_path.name, e)
+                continue
+
+            # Recompute what's still missing
+            missing = [(tt, a) for tt, a in missing
+                       if getattr(self, a) is None]
+            if not missing:
+                break
+
 
     def get_string(self, string_id: int) -> Optional[str]:
         """Look up a string ID across all loaded tables."""

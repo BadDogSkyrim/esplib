@@ -274,6 +274,29 @@ class Record:
         # Back-reference to owning Plugin (set by Plugin._link_records)
         self.plugin = None
 
+    def normalize_form_id(self, form_id) -> 'FormID':
+        """Convert a FormID from this record's plugin indexing to
+        load-order indexing. Delegates to the owning plugin."""
+        if self.plugin is not None:
+            return self.plugin.normalize_form_id(form_id)
+        from .utils import FormID as _FormID
+        return _FormID(form_id) if isinstance(form_id, int) else form_id
+
+
+    def _normalize_value(self, value):
+        """Normalize FormIDs in a parsed schema value to load-order indexing."""
+        if self.plugin is None or self.plugin.plugin_set is None:
+            return value
+        from .utils import FormID as _FormID
+        if isinstance(value, _FormID):
+            return self.normalize_form_id(value)
+        if isinstance(value, dict):
+            return {k: self._normalize_value(v) for k, v in value.items()}
+        if isinstance(value, list):
+            return [self._normalize_value(v) for v in value]
+        return value
+
+
     @property
     def is_compressed(self) -> bool:
         return bool(self.flags & COMPRESSED_FLAG)
@@ -349,6 +372,7 @@ class Record:
                         record_signature=self.signature,
                     )
                     value = member.from_subrecord(subrecord, ctx)
+                    value = self._normalize_value(value)
                     self._resolved_cache[key] = value
                     return value
                 return None

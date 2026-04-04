@@ -84,6 +84,7 @@ class PluginSet:
             plugin = Plugin()
             plugin.string_search_dirs = list(self.string_search_dirs)
             plugin.load(path)
+            plugin.plugin_set = self
             self._plugins[name] = plugin
             self._loaded_full[name] = True
             # Invalidate override index when new plugin loaded
@@ -216,6 +217,21 @@ class PluginSet:
         if source_plugin is None:
             return None
         return self.resolve_form_id(form_id, source_plugin)
+
+    def get_record_by_edid(self, signature: str,
+                           editor_id: str) -> Optional[Record]:
+        """Find the winning override of a record by signature and EditorID.
+
+        Searches all loaded plugins in load order and returns the last
+        (winning) copy found.  Returns None if no match exists.
+        """
+        winner = None
+        for plugin in self:
+            for record in plugin.get_records_by_signature(signature):
+                if record.editor_id == editor_id:
+                    winner = record
+        return winner
+
 
     def __iter__(self):
         """Iterate over loaded plugins in load order."""
