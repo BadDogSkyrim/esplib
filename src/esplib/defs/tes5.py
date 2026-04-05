@@ -6,7 +6,7 @@ Ported from wbDefinitionsTES5.pas and wbDefinitionsCommon.pas.
 from .types import (
     IntType, EspFlags, EspEnum,
     EspInteger, EspFloat, EspString, EspFormID, EspByteArray,
-    EspAlternateTextures,
+    EspGmstValue, EspAlternateTextures,
     EspStruct, EspArray, EspSubRecord, EspGroup, EspRecord,
 )
 from . import common
@@ -17,9 +17,9 @@ from .game import GameRegistry
 
 GMST = EspRecord.new('GMST', 'Game Setting', [
     common.EDID,
-    # DATA is a union: string, int, float, or bool depending on EDID prefix.
-    # For now, treat as raw bytes since we'd need a custom decider.
-    EspSubRecord.new('DATA', 'Value', EspByteArray.new('value')),
+    # DATA type is determined by the first character of the EDID:
+    # f=float, i=int32, s=string, b=bool
+    EspSubRecord.new('DATA', 'Value', EspGmstValue.new('value')),
 ])
 
 GLOB = EspRecord.new('GLOB', 'Global Variable', [
@@ -198,6 +198,7 @@ ARMO = EspRecord.new('ARMO', 'Armor', [
         EspSubRecord.new('MIC2', 'Message Icon 2',
                          EspString.new('message_icon', 'zstring')),
     ]),
+    EspSubRecord.new('BODT', 'Body Template (Old)', EspByteArray.new('bodt')),
     EspSubRecord.new('BOD2', 'Body Template', EspStruct.new('bod2', [
         EspInteger.new('first_person_flags', IntType.U32, formatter=BodypartFlags),
         EspInteger.new('armor_type', IntType.U32,
@@ -1029,6 +1030,12 @@ NPC_ = EspRecord.new('NPC_', 'Non-Player Character', [
         EspSubRecord.new('ATKE', 'Attack Event',
                          EspString.new('event', 'zstring')),
     ]),
+    EspSubRecord.new('SPOR', 'Spectator Override Package List',
+                     EspFormID.new('spectator_override', ['FLST'])),
+    EspSubRecord.new('OCOR', 'Observe Dead Body Override Package List',
+                     EspFormID.new('observe_dead_override', ['FLST'])),
+    EspSubRecord.new('GWOR', 'Guard Warn Override Package List',
+                     EspFormID.new('guard_warn_override', ['FLST'])),
     EspSubRecord.new('ECOR', 'Race Override',
                      EspFormID.new('ecor', ['RACE'])),
     # Perks
@@ -1039,13 +1046,20 @@ NPC_ = EspRecord.new('NPC_', 'Non-Player Character', [
         EspInteger.new('rank', IntType.U8),
         EspByteArray.new('unused', size=3),
     ])),
-    # Inventory
+    # Inventory (repeating CNTO + optional COED pairs)
     EspSubRecord.new('COCT', 'Item Count',
                      EspInteger.new('count', IntType.U32)),
-    EspSubRecord.new('CNTO', 'Item', EspStruct.new('item', [
-        EspFormID.new('item'),
-        EspInteger.new('count', IntType.S32),
-    ])),
+    EspGroup.new('Item', [
+        EspSubRecord.new('CNTO', 'Item', EspStruct.new('item', [
+            EspFormID.new('item'),
+            EspInteger.new('count', IntType.S32),
+        ])),
+        EspSubRecord.new('COED', 'Extra Data', EspStruct.new('extra_data', [
+            EspFormID.new('owner'),
+            EspInteger.new('global_or_rank', IntType.U32),
+            EspFloat.new('item_condition'),
+        ])),
+    ]),
     # AI data
     EspSubRecord.new('AIDT', 'AI Data', EspByteArray.new('ai_data')),
     # Packages (repeating)
@@ -1112,13 +1126,26 @@ NPC_ = EspRecord.new('NPC_', 'Non-Player Character', [
                      EspFormID.new('combat_style', ['CSTY'])),
     EspSubRecord.new('GNAM', 'Gifts',
                      EspFormID.new('gift_filter', ['FLST'])),
-    EspSubRecord.new('NAM5', 'Unknown', EspByteArray.new('nam5')),
-    EspSubRecord.new('NAM6', 'Height', EspFloat.new('height')),
-    EspSubRecord.new('NAM7', 'Weight', EspFloat.new('weight')),
-    EspSubRecord.new('NAM8', 'Sound Level',
-                     EspInteger.new('sound_level', IntType.U32)),
+    EspGroup.new('Geometry', [
+        EspSubRecord.new('NAM5', 'Unknown', EspByteArray.new('nam5')),
+        EspSubRecord.new('NAM6', 'Height', EspFloat.new('height')),
+        EspSubRecord.new('NAM7', 'Weight', EspFloat.new('weight')),
+        EspSubRecord.new('NAM8', 'Sound Level',
+                         EspInteger.new('sound_level', IntType.U32)),
+    ]),
     EspSubRecord.new('CSCR', 'Inherits Sound From',
                      EspFormID.new('sound_source', ['NPC_'])),
+    # Sound overrides: CSDT header, then repeating CSDI+CSDC pairs
+    EspGroup.new('Sound Type', [
+        EspSubRecord.new('CSDT', 'Sound Type',
+                         EspInteger.new('type', IntType.U32)),
+        EspGroup.new('Sound', [
+            EspSubRecord.new('CSDI', 'Sound',
+                             EspFormID.new('sound', ['SNDR'])),
+            EspSubRecord.new('CSDC', 'Sound Chance',
+                             EspInteger.new('chance', IntType.U8)),
+        ]),
+    ]),
     # Outfits
     EspSubRecord.new('DOFT', 'Default Outfit',
                      EspFormID.new('default_outfit', ['OTFT'])),

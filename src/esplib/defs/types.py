@@ -376,6 +376,72 @@ class EspByteArray:
 
 
 @dataclass
+class EspGmstValue:
+    """GMST DATA value — type determined by EDID prefix.
+
+    f = float32, i = int32, s = uint32 (string ID), b = uint32 (bool).
+    Reads/writes the appropriate type based on the first character of
+    the record's editor ID, passed via ctx.extra['editor_id'].
+    """
+    name: str
+
+    @classmethod
+    def new(cls, name: str) -> 'EspGmstValue':
+        return cls(name=name)
+
+    @staticmethod
+    def _edid_type(ctx) -> str:
+        edid = ''
+        if ctx is not None:
+            edid = ctx.extra.get('editor_id', '')
+        if edid:
+            return edid[0].lower()
+        return 'f'
+
+    def from_bytes(self, reader: BinaryReader, ctx=None,
+                   available: int = None) -> Any:
+        t = self._edid_type(ctx)
+        if t == 'f':
+            return struct.unpack('<f', reader.read_bytes(4))[0]
+        elif t == 'i':
+            return struct.unpack('<i', reader.read_bytes(4))[0]
+        elif t == 'b':
+            return bool(struct.unpack('<I', reader.read_bytes(4))[0])
+        else:
+            # 's' = string ID (uint32), or unknown prefix
+            return struct.unpack('<I', reader.read_bytes(4))[0]
+
+    def to_bytes(self, value, ctx=None) -> bytes:
+        t = self._edid_type(ctx)
+        if t == 'f':
+            return struct.pack('<f', float(value))
+        elif t == 'i':
+            return struct.pack('<i', int(value))
+        elif t == 'b':
+            return struct.pack('<I', 1 if value else 0)
+        elif t == 's':
+            if isinstance(value, str):
+                return value.encode('cp1252') + b'\x00'
+            return struct.pack('<I', int(value))
+        # Unknown prefix — infer from Python type
+        if isinstance(value, float):
+            return struct.pack('<f', value)
+        elif isinstance(value, bool):
+            return struct.pack('<I', 1 if value else 0)
+        elif isinstance(value, int):
+            return struct.pack('<i', value)
+        raise TypeError(
+            f"EspGmstValue: cannot serialize {type(value).__name__}")
+
+    @property
+    def byte_size(self) -> int:
+        return 4
+
+    def to_dict(self) -> dict:
+        return {'type': 'gmst_value', 'name': self.name}
+
+
+@dataclass
 class EspAlternateTextures:
     """Alternate texture array (MO2S/MO3S/MO4S/MO5S).
 
@@ -450,6 +516,15 @@ class EspStruct:
         for member in self.members:
             if member.name in value:
                 writer.write_bytes(member.to_bytes(value[member.name]))
+            else:
+                # Zero-fill missing fields so the struct is full-size
+                size = getattr(member, 'byte_size', None)
+                if size is None:
+                    size = getattr(member, 'size', None)
+                if size is not None:
+                    writer.write_bytes(b'\x00' * size)
+                else:
+                    break  # Variable-size field, can't pad
         return writer.get_bytes()
 
     def to_dict(self) -> dict:
@@ -550,18 +625,17 @@ class EspUnion:
         # Caller must know which member was active and serialize accordingly.
         # For simple cases, delegate to the value's type.
         # For round-trip, the original bytes are preserved.
-        if isinstance(value, dict):
-            # Try each member until one works (struct members produce dicts)
-            for member in self.members:
-                if hasattr(member, 'to_bytes'):
-                    try:
-                        return member.to_bytes(value)
-                    except (KeyError, TypeError):
-                        continue
-        elif isinstance(value, bytes):
+        if isinstance(value, bytes):
             return value
-        # Fallback: try first member
-        return self.members[0].to_bytes(value)
+        # Try each member until one succeeds
+        for member in self.members:
+            if hasattr(member, 'to_bytes'):
+                try:
+                    return member.to_bytes(value)
+                except (KeyError, TypeError, struct.error):
+                    continue
+        raise TypeError(
+            f"Union '{self.name}': cannot serialize {type(value).__name__}")
 
     def to_dict(self) -> dict:
         return {
@@ -608,9 +682,12 @@ class EspSubRecord:
         except TypeError:
             return self.value_def.from_bytes(reader, ctx)
 
-    def to_subrecord_data(self, value: Any) -> bytes:
+    def to_subrecord_data(self, value: Any, ctx: EspContext = None) -> bytes:
         """Serialize a value back to raw subrecord data bytes."""
-        return self.value_def.to_bytes(value)
+        try:
+            return self.value_def.to_bytes(value, ctx=ctx)
+        except TypeError:
+            return self.value_def.to_bytes(value)
 
     def to_dict(self) -> dict:
         return {

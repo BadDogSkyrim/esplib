@@ -4,10 +4,9 @@ Covers creating plugins from scratch, adding records with schemas,
 saving/reloading, and verifying field values against real game data.
 """
 
-import struct
 import pytest
 
-from esplib import Plugin, Record, SubRecord, FormID
+from esplib import Plugin, Record, FormID
 from esplib.defs import tes5
 
 
@@ -49,40 +48,27 @@ class TestPluginCreation:
 
     def test_create_plugin_with_masters(self, tmp_path):
         """Master list should survive save/reload."""
-        plugin = Plugin()
-        plugin.header.version = 1.71
-        plugin.header.masters = ['Skyrim.esm', 'Update.esm']
-        plugin.header.master_sizes = [0, 0]
+        plugin = Plugin.new_plugin(tmp_path / "with_masters.esp",
+                                   masters=['Skyrim.esm', 'Update.esm'])
+        plugin.save()
 
-        path = tmp_path / "with_masters.esp"
-        plugin.save(path)
-
-        loaded = Plugin(path)
+        loaded = Plugin(tmp_path / "with_masters.esp")
         assert loaded.header.masters == ['Skyrim.esm', 'Update.esm']
 
 
     def test_gmst_override_save_reload(self, tmp_path):
         """Create a GMST override, save, reload, verify field values."""
-        plugin = Plugin()
-        plugin.header.is_esm = False
-        plugin.header.masters = ['Skyrim.esm']
-        plugin.header.master_sizes = [0]
-        plugin.header.version = 1.71
+        plugin = Plugin.new_plugin(tmp_path / 'gmst_test.esp',
+                                   masters=['Skyrim.esm'])
 
-        gmst = Record('GMST', FormID(0x00066C5B), 0)
-        gmst.timestamp = 0
-        gmst.version = 44
-        gmst.version_control_info = 0
-        gmst.add_subrecord('EDID', b'fJumpHeightMin\x00')
-        data_sr = gmst.add_subrecord('DATA')
-        data_sr.data = struct.pack('<f', 500.0)
-
+        gmst = Record('GMST', FormID(0x00066C5B))
+        gmst.add_subrecord('EDID', 'fJumpHeightMin')
         plugin.add_record(gmst)
+        gmst['DATA'] = 500.0
 
-        path = tmp_path / 'gmst_test.esp'
-        plugin.save(path)
+        plugin.save()
 
-        loaded = Plugin(path)
+        loaded = Plugin(tmp_path / 'gmst_test.esp')
         assert loaded.header.masters == ['Skyrim.esm']
         assert len(loaded.records) == 1
 
@@ -90,38 +76,37 @@ class TestPluginCreation:
         assert rec.signature == 'GMST'
         assert rec.form_id.value == 0x00066C5B
         assert rec.editor_id == 'fJumpHeightMin'
-
-        data = rec.get_subrecord('DATA')
-        value = struct.unpack('<f', data.data)[0]
-        assert value == pytest.approx(500.0)
+        assert rec['DATA'] == pytest.approx(500.0)
 
 
     def test_multiple_record_types(self, tmp_path):
         """Records of different types get separate groups."""
-        plugin = Plugin()
-        plugin.header.version = 1.71
+        plugin = Plugin.new_plugin(tmp_path / 'multi_type.esp')
 
-        gmst = Record('GMST', FormID(0x100), 0)
-        gmst.version = 44
-        gmst.add_subrecord('EDID', b'fTest\x00')
-        gmst.add_subrecord('DATA', struct.pack('<f', 1.0))
+        gmst = Record('GMST', FormID(0x100))
+        gmst.add_subrecord('EDID', 'fTest')
         plugin.add_record(gmst)
+        gmst['DATA'] = 1.0
 
-        glob = Record('GLOB', FormID(0x200), 0)
-        glob.version = 44
-        glob.add_subrecord('EDID', b'TestGlobal\x00')
-        glob.add_subrecord('FNAM', bytes([ord('f')]))
-        glob.add_subrecord('FLTV', struct.pack('<f', 0.0))
+        glob = Record('GLOB', FormID(0x200))
+        glob.add_subrecord('EDID', 'TestGlobal')
         plugin.add_record(glob)
+        glob['FNAM'] = ord('f')
+        glob['FLTV'] = 76.0
 
-        path = tmp_path / 'multi_type.esp'
-        plugin.save(path)
+        plugin.save()
 
-        loaded = Plugin(path)
+        loaded = Plugin(tmp_path / 'multi_type.esp')
         assert len(loaded.records) == 2
         assert len(loaded.groups) == 2
-        assert loaded.get_record_by_editor_id('fTest') is not None
-        assert loaded.get_record_by_editor_id('TestGlobal') is not None
+
+        gmst_loaded = loaded.get_record_by_editor_id('fTest')
+        assert gmst_loaded is not None
+        assert gmst_loaded['DATA'] == pytest.approx(1.0)
+
+        glob_loaded = loaded.get_record_by_editor_id('TestGlobal')
+        assert glob_loaded is not None
+        assert glob_loaded['FLTV'] == pytest.approx(76.0)
 
 
 # ---------------------------------------------------------------------------
@@ -132,189 +117,130 @@ class TestPluginWeaponCreation:
     """Create a weapon plugin, save, reload, verify via schema."""
 
 
-    def _make_weapon_plugin(self):
+    def _make_weapon_plugin(self, tmp_path):
         """Build a plugin with a single test weapon."""
-        plugin = Plugin()
-        plugin.header.is_esm = False
-        plugin.header.masters = ['Skyrim.esm']
-        plugin.header.master_sizes = [0]
-        plugin.header.version = 1.71
+        plugin = Plugin.new_plugin(tmp_path / 'weapon_test.esp',
+                                   masters=['Skyrim.esm'])
 
-        weap = Record('WEAP', FormID(0x01000800), 0)
-        weap.version = 44
-        weap.add_subrecord('EDID', b'esplib_TestSword\x00')
-        weap.add_subrecord('OBND', struct.pack('<6h', -10, -1, -10, 10, 30, 10))
-        name = b'Esplib Test Sword'
-        weap.add_subrecord('FULL', struct.pack('<H', len(name)) + name)
-        desc = b'A test weapon created by esplib.'
-        weap.add_subrecord('DESC', struct.pack('<H', len(desc)) + desc)
-
-        # DATA: value=100, weight=5.0, damage=50
-        weap.add_subrecord('DATA',
-                           struct.pack('<I', 100) +
-                           struct.pack('<f', 5.0) +
-                           struct.pack('<H', 50))
-
-        # DNAM: 100 bytes for SSE
-        dnam = bytearray(100)
-        struct.pack_into('<B', dnam, 0, 1)     # animation_type = OneHandSword
-        struct.pack_into('<f', dnam, 4, 1.0)   # speed
-        struct.pack_into('<f', dnam, 8, 0.7)   # reach
-        weap.add_subrecord('DNAM', bytes(dnam))
-
-        # CRDT: 24 bytes
-        crdt = bytearray(24)
-        struct.pack_into('<H', crdt, 0, 10)    # crit damage
-        struct.pack_into('<f', crdt, 4, 1.0)   # crit % mult
-        weap.add_subrecord('CRDT', bytes(crdt))
-
-        # VNAM: detection sound level
-        weap.add_subrecord('VNAM', struct.pack('<I', 1))
-
+        weap = Record('WEAP', FormID(0x01000800))
+        weap.add_subrecord('EDID', 'esplib_TestSword')
         plugin.add_record(weap)
+
+        weap['OBND'] = {'x1': -10, 'y1': -1, 'z1': -10,
+                         'x2': 10, 'y2': 30, 'z2': 10}
+        weap['FULL'] = 'Esplib Test Sword'
+        weap['DESC'] = 'A test weapon created by esplib.'
+        weap['DATA'] = {'value': 100, 'weight': 5.0, 'damage': 50}
+        weap['DNAM'] = {
+            'animation_type': 1,  # OneHandSword
+            'speed': 1.0,
+            'reach': 0.7,
+        }
+        weap['CRDT'] = {'crit_damage': 10, 'crit_pct_mult': 1.0}
+        weap['VNAM'] = 1  # Normal
+
         return plugin
 
 
     def test_weapon_save_reload(self, tmp_path):
         """Weapon record survives save/reload with correct fields via schema."""
-        plugin = self._make_weapon_plugin()
-        path = tmp_path / 'weapon_test.esp'
-        plugin.save(path)
+        plugin = self._make_weapon_plugin(tmp_path)
+        plugin.save()
 
-        loaded = Plugin(path)
+        loaded = Plugin(tmp_path / 'weapon_test.esp')
         assert len(loaded.records) == 1
 
         rec = loaded.records[0]
         assert rec.signature == 'WEAP'
         assert rec.editor_id == 'esplib_TestSword'
-
-        result = tes5.WEAP.from_record(rec)
-        assert result['Editor ID'] == 'esplib_TestSword'
-        assert result['Name'] == 'Esplib Test Sword'
-        assert result['Game Data']['value'] == 100
-        assert result['Game Data']['weight'] == pytest.approx(5.0)
-        assert result['Game Data']['damage'] == 50
-        assert result['Weapon Data']['speed'] == pytest.approx(1.0)
-        assert result['Weapon Data']['reach'] == pytest.approx(0.7)
+        assert rec['FULL'] == 'Esplib Test Sword'
+        assert rec['DATA']['value'] == 100
+        assert rec['DATA']['weight'] == pytest.approx(5.0)
+        assert rec['DATA']['damage'] == 50
+        assert rec['DNAM']['speed'] == pytest.approx(1.0)
+        assert rec['DNAM']['reach'] == pytest.approx(0.7)
 
 
 class TestPluginArmorCreation:
     """Create an armor plugin, save, reload, verify via schema."""
 
 
-    def _make_armor_plugin(self):
-        plugin = Plugin()
-        plugin.header.is_esm = False
-        plugin.header.masters = ['Skyrim.esm']
-        plugin.header.master_sizes = [0]
-        plugin.header.version = 1.71
+    def _make_armor_plugin(self, tmp_path):
+        plugin = Plugin.new_plugin(tmp_path / 'armor_test.esp',
+                                   masters=['Skyrim.esm'])
 
-        armo = Record('ARMO', FormID(0x01000800), 0)
-        armo.version = 44
-        armo.add_subrecord('EDID', b'esplib_TestArmor\x00')
-        armo.add_subrecord('OBND', struct.pack('<6h', -15, -5, -15, 15, 30, 15))
-        name = b'Esplib Test Armor'
-        armo.add_subrecord('FULL', struct.pack('<H', len(name)) + name)
-        armo.add_subrecord('BOD2', struct.pack('<II', 0x00000004, 1))
-        armo.add_subrecord('RNAM', struct.pack('<I', 0x00013746))  # Nord race
-        desc = b'Test armor created by esplib.'
-        armo.add_subrecord('DESC', struct.pack('<H', len(desc)) + desc)
-        armo.add_subrecord('DATA', struct.pack('<if', 200, 35.0))
-        # Armor rating stored x100: 3000 = 30.0 in-game
-        armo.add_subrecord('DNAM', struct.pack('<i', 3000))
-
+        armo = Record('ARMO', FormID(0x01000800))
+        armo.add_subrecord('EDID', 'esplib_TestArmor')
         plugin.add_record(armo)
+
+        armo['OBND'] = {'x1': -15, 'y1': -5, 'z1': -15,
+                         'x2': 15, 'y2': 30, 'z2': 15}
+        armo['FULL'] = 'Esplib Test Armor'
+        armo['BOD2'] = {'first_person_flags': 0x00000004, 'armor_type': 1}
+        armo['RNAM'] = FormID(0x00013746)  # NordRace
+        armo['DESC'] = 'Test armor created by esplib.'
+        armo['DATA'] = {'value': 200, 'weight': 35.0}
+        # Armor rating stored x100: 3000 = 30.0 in-game
+        armo['DNAM'] = 3000
+
         return plugin
 
 
     def test_armor_save_reload(self, tmp_path):
         """Armor record survives save/reload with correct fields via schema."""
-        plugin = self._make_armor_plugin()
-        path = tmp_path / 'armor_test.esp'
-        plugin.save(path)
+        plugin = self._make_armor_plugin(tmp_path)
+        plugin.save()
 
-        loaded = Plugin(path)
+        loaded = Plugin(tmp_path / 'armor_test.esp')
         assert len(loaded.records) == 1
         rec = loaded.records[0]
         assert rec.editor_id == 'esplib_TestArmor'
-
-        result = tes5.ARMO.from_record(rec)
-        assert result['Editor ID'] == 'esplib_TestArmor'
-        assert result['Data']['value'] == 200
-        assert result['Data']['weight'] == pytest.approx(35.0)
-        assert result['Armor Rating'] == 3000
-
-        # RNAM race FormID
-        rnam = rec.get_subrecord('RNAM')
-        fid = struct.unpack('<I', rnam.data)[0]
-        assert fid == 0x00013746
+        assert rec['DATA']['value'] == 200
+        assert rec['DATA']['weight'] == pytest.approx(35.0)
+        assert rec['DNAM'] == 3000
+        assert rec['RNAM'] == FormID(0x00013746)
 
 
 class TestPluginPotionCreation:
     """Create a potion plugin, save, reload, verify via schema."""
 
 
-    def _make_potion_plugin(self):
-        plugin = Plugin()
-        plugin.header.is_esm = False
-        plugin.header.masters = ['Skyrim.esm']
-        plugin.header.master_sizes = [0]
-        plugin.header.version = 1.71
+    def _make_potion_plugin(self, tmp_path):
+        plugin = Plugin.new_plugin(tmp_path / 'potion_test.esp',
+                                   masters=['Skyrim.esm'])
 
-        alch = Record('ALCH', FormID(0x01000800), 0)
-        alch.version = 44
-        alch.add_subrecord('EDID', b'esplib_TestPotion\x00')
-        alch.add_subrecord('OBND', struct.pack('<6h', -3, -3, -7, 3, 3, 7))
-        name = b'Esplib Test Potion'
-        alch.add_subrecord('FULL', struct.pack('<H', len(name)) + name)
-        desc = b'A test potion from esplib.'
-        alch.add_subrecord('DESC', struct.pack('<H', len(desc)) + desc)
-
-        # DATA: weight=0.5
-        alch.add_subrecord('DATA', struct.pack('<f', 0.5))
-
-        # ENIT: value=50, flags=0, no addiction, no sound
-        enit = struct.pack('<i', 50)       # value
-        enit += struct.pack('<I', 0)       # flags
-        enit += struct.pack('<I', 0)       # addiction
-        enit += struct.pack('<f', 0.0)     # addiction chance
-        enit += struct.pack('<I', 0)       # sound consume
-        alch.add_subrecord('ENIT', enit)
-
-        # Effect: Restore Health (0x0003EB15)
-        alch.add_subrecord('EFID', struct.pack('<I', 0x0003EB15))
-        # EFIT: magnitude=50, area=0, duration=0
-        alch.add_subrecord('EFIT', struct.pack('<fII', 50.0, 0, 0))
-
+        alch = Record('ALCH', FormID(0x01000800))
+        alch.add_subrecord('EDID', 'esplib_TestPotion')
         plugin.add_record(alch)
+
+        alch['OBND'] = {'x1': -3, 'y1': -3, 'z1': -7,
+                         'x2': 3, 'y2': 3, 'z2': 7}
+        alch['FULL'] = 'Esplib Test Potion'
+        alch['DESC'] = 'A test potion from esplib.'
+        alch['DATA'] = 0.5  # weight
+        alch['ENIT'] = {'value': 50, 'flags': 0, 'addiction': 0,
+                         'addiction_chance': 0.0, 'sound_consume': 0}
+        alch['EFID'] = FormID(0x0003EB15)  # Restore Health
+        alch['EFIT'] = {'magnitude': 50.0, 'area': 0, 'duration': 0}
+
         return plugin
 
 
     def test_potion_save_reload(self, tmp_path):
         """Potion record survives save/reload with correct fields."""
-        plugin = self._make_potion_plugin()
-        path = tmp_path / 'potion_test.esp'
-        plugin.save(path)
+        plugin = self._make_potion_plugin(tmp_path)
+        plugin.save()
 
-        loaded = Plugin(path)
+        loaded = Plugin(tmp_path / 'potion_test.esp')
         assert len(loaded.records) == 1
         rec = loaded.records[0]
         assert rec.editor_id == 'esplib_TestPotion'
-
-        result = tes5.ALCH.from_record(rec)
-        assert result['Weight'] == pytest.approx(0.5)
-
-        efid = rec.get_subrecord('EFID')
-        assert efid is not None
-        effect_id = struct.unpack('<I', efid.data)[0]
-        assert effect_id == 0x0003EB15
-
-        efit = rec.get_subrecord('EFIT')
-        assert efit is not None
-        magnitude, area, duration = struct.unpack('<fII', efit.data)
-        assert magnitude == pytest.approx(50.0)
-        assert area == 0
-        assert duration == 0
+        assert rec['FULL'] == 'Esplib Test Potion'
+        assert rec['DATA'] == pytest.approx(0.5)
+        assert rec['EFID'] == FormID(0x0003EB15)
+        assert rec['EFIT']['magnitude'] == pytest.approx(50.0)
+        assert rec['EFIT']['area'] == 0
+        assert rec['EFIT']['duration'] == 0
 
 
 # ---------------------------------------------------------------------------
@@ -410,14 +336,11 @@ class TestSkyrimFieldValues:
     def test_iron_sword_fields(self, skyrim):
         """IronSword should have known vanilla values."""
         weapon = skyrim.get_record_by_editor_id('IronSword')
-        if not weapon:
-            assert False, "IronSword not found in Skyrim.esm"
+        assert weapon is not None, "IronSword not found in Skyrim.esm"
 
-        result = tes5.WEAP.from_record(weapon)
-        data = result['Game Data']
-        assert data['damage'] == 7
-        assert data['value'] == 25
-        assert data['weight'] == pytest.approx(9.0)
+        assert weapon['DATA']['damage'] == 7
+        assert weapon['DATA']['value'] == 25
+        assert weapon['DATA']['weight'] == pytest.approx(9.0)
 
 
     @pytest.mark.gamefiles
@@ -425,12 +348,10 @@ class TestSkyrimFieldValues:
     def test_iron_armor_fields(self, skyrim):
         """ArmorIronCuirass should have known vanilla values."""
         armor = skyrim.get_record_by_editor_id('ArmorIronCuirass')
-        if not armor:
-            assert False, "ArmorIronCuirass not found in Skyrim.esm"
+        assert armor is not None, "ArmorIronCuirass not found in Skyrim.esm"
 
-        result = tes5.ARMO.from_record(armor)
-        assert result['Data']['value'] == 125
-        assert result['Data']['weight'] == pytest.approx(30.0)
+        assert armor['DATA']['value'] == 125
+        assert armor['DATA']['weight'] == pytest.approx(30.0)
 
 
     @pytest.mark.gamefiles

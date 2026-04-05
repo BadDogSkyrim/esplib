@@ -120,9 +120,9 @@ class PluginHeader:
 
         for i, master in enumerate(self.masters):
             record.add_subrecord("MAST").set_string(master)
-            if i < len(self.master_sizes):
-                data_rec = record.add_subrecord("DATA")
-                data_rec.data = struct.pack('<Q', self.master_sizes[i])
+            size = self.master_sizes[i] if i < len(self.master_sizes) else 0
+            data_rec = record.add_subrecord("DATA")
+            data_rec.data = struct.pack('<Q', size)
 
         if self.override_records:
             onam = record.add_subrecord("ONAM")
@@ -293,10 +293,15 @@ class Plugin:
             record.form_id = self.get_next_form_id()
         if record.form_id.file_index == self._LOCAL_SENTINEL:
             self._new_records.append(record)
-        if record.version == 40 and self._game_registry:
-            # Set record version to match the game (40 is the default)
-            record.version = self._RECORD_VERSIONS.get(
-                self._game_registry.game_id, 40)
+        if self._game_registry:
+            if record.version == 44:
+                # Set record version to match the game
+                record.version = self._RECORD_VERSIONS.get(
+                    self._game_registry.game_id, 44)
+            if record.schema is None:
+                schema = self._game_registry.get(record.signature)
+                if schema is not None:
+                    record.bind_schema(schema)
         self.records.append(record)
 
         target_group = None

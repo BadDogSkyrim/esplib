@@ -259,7 +259,7 @@ class Record:
         self.form_id = FormID(form_id) if isinstance(form_id, int) else form_id
         self.flags = flags
         self.timestamp: int = 0
-        self.version: int = 40
+        self.version: int = 44
         self.version_control_info: int = 0
         self.subrecords: List[SubRecord] = []
         self.children: Optional[List[ChildEntry]] = None
@@ -370,6 +370,7 @@ class Record:
                         flags=self.flags,
                         form_version=self.version,
                         record_signature=self.signature,
+                        extra={'editor_id': self.editor_id or ''},
                     )
                     value = member.from_subrecord(subrecord, ctx)
                     value = self._normalize_value(value)
@@ -393,21 +394,42 @@ class Record:
         if self.schema is not None:
             member = self.schema.get_member(key)
             if member is not None:
-                raw = member.to_subrecord_data(value)
-                subrecord = self.get_subrecord(key)
-                if subrecord is not None:
-                    subrecord.data = raw
-                else:
-                    self.add_subrecord(key, raw)
-                self._resolved_cache.pop(key, None)
-                self.modified = True
-                return
+                from .defs.context import EspContext as _Ctx
+                ctx = _Ctx(
+                    flags=self.flags,
+                    form_version=self.version,
+                    record_signature=self.signature,
+                    extra={'editor_id': self.editor_id or ''},
+                )
+                raw = member.to_subrecord_data(value, ctx=ctx)
+                if isinstance(raw, (bytes, bytearray)):
+                    subrecord = self.get_subrecord(key)
+                    if subrecord is not None:
+                        subrecord.data = bytearray(raw)
+                    else:
+                        self.add_subrecord(key, raw)
+                    self._resolved_cache.pop(key, None)
+                    self.modified = True
+                    return
+                # Schema couldn't serialize — fall through
 
         # Fallback: set raw data
-        if isinstance(value, bytes):
+        if isinstance(value, str):
+            value = value.encode('cp1252') + b'\x00'
+        elif isinstance(value, float):
+            value = struct.pack('<f', value)
+        elif isinstance(value, int) and not isinstance(value, bool):
+            # Auto-size: 1/2/4 bytes based on magnitude
+            if -128 <= value <= 255:
+                value = struct.pack('<B', value & 0xFF)
+            elif -32768 <= value <= 65535:
+                value = struct.pack('<H', value & 0xFFFF)
+            else:
+                value = struct.pack('<I', value & 0xFFFFFFFF)
+        if isinstance(value, (bytes, bytearray)):
             subrecord = self.get_subrecord(key)
             if subrecord is not None:
-                subrecord.data = value
+                subrecord.data = bytearray(value)
             else:
                 self.add_subrecord(key, value)
             self.modified = True
@@ -422,7 +444,8 @@ class Record:
             self.modified = True
         else:
             raise TypeError(
-                f"Without a schema, value must be bytes or SubRecord, got {type(value)}")
+                f"Without a schema, value must be bytes, str, or SubRecord, "
+                f"got {type(value)}")
 
     def __contains__(self, key: str) -> bool:
         """Check if a subrecord with the given signature exists."""
@@ -452,7 +475,9 @@ class Record:
     def get_subrecords(self, signature: str) -> List[SubRecord]:
         return [sr for sr in self.subrecords if sr.signature == signature]
 
-    def add_subrecord(self, signature: str, data: bytes = b'') -> SubRecord:
+    def add_subrecord(self, signature: str, data=b'') -> SubRecord:
+        if isinstance(data, str):
+            data = data.encode('cp1252') + b'\x00'
         subrecord = SubRecord(signature, data)
         self.subrecords.append(subrecord)
         self.modified = True

@@ -136,10 +136,16 @@ class TestStructSetItem:
         assert record.get_subrecord('DATA').data == new_data
 
 
-    def test_write_wrong_type_without_schema_raises(self):
+    def test_write_int_without_schema_stores_bytes(self):
+        record = Record('WEAP', FormID(0x800), 0)
+        record['DATA'] = 42
+        assert record.get_subrecord('DATA').data == bytearray(b'\x2a')
+
+
+    def test_write_unsupported_type_without_schema_raises(self):
         record = Record('WEAP', FormID(0x800), 0)
         with pytest.raises(TypeError):
-            record['DATA'] = 42
+            record['DATA'] = [1, 2, 3]
 
 
 class TestStructRoundTrip:
