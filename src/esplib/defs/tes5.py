@@ -1021,6 +1021,12 @@ NPC_ = EspRecord.new('NPC_', 'Non-Player Character', [
                      EspInteger.new('count', IntType.U32)),
     EspSubRecord.new('SPLO', 'Actor Effect',
                      EspFormID.new('spell', ['SPEL', 'SHOU', 'LVSP'])),
+    # Destruction data
+    # EspSubRecord.new('DEST', ...) -- not yet implemented
+    EspSubRecord.new('WNAM', 'Worn Armor',
+                     EspFormID.new('worn_armor', ['ARMO'])),
+    EspSubRecord.new('ANAM', 'Far Away Model',
+                     EspFormID.new('far_model', ['ARMO'])),
     # Attack data
     EspSubRecord.new('ATKR', 'Attack Race',
                      EspFormID.new('attack_race', ['RACE'])),
@@ -1113,10 +1119,6 @@ NPC_ = EspRecord.new('NPC_', 'Non-Player Character', [
         EspInteger.new('magicka', IntType.U16),
         EspInteger.new('stamina', IntType.U16),
     ])),
-    EspSubRecord.new('WNAM', 'Worn Armor',
-                     EspFormID.new('worn_armor', ['ARMO'])),
-    EspSubRecord.new('ANAM', 'Far Away Model',
-                     EspFormID.new('far_model', ['ARMO'])),
     # Head parts (repeating)
     EspSubRecord.new('PNAM', 'Head Part',
                      EspFormID.new('head_part', ['HDPT'])),
@@ -1126,12 +1128,21 @@ NPC_ = EspRecord.new('NPC_', 'Non-Player Character', [
                      EspFormID.new('combat_style', ['CSTY'])),
     EspSubRecord.new('GNAM', 'Gifts',
                      EspFormID.new('gift_filter', ['FLST'])),
-    EspGroup.new('Geometry', [
-        EspSubRecord.new('NAM5', 'Unknown', EspByteArray.new('nam5')),
-        EspSubRecord.new('NAM6', 'Height', EspFloat.new('height')),
-        EspSubRecord.new('NAM7', 'Weight', EspFloat.new('weight')),
-        EspSubRecord.new('NAM8', 'Sound Level',
-                         EspInteger.new('sound_level', IntType.U32)),
+    EspSubRecord.new('NAM5', 'Unknown', EspByteArray.new('nam5')),
+    EspSubRecord.new('NAM6', 'Height', EspFloat.new('height')),
+    EspSubRecord.new('NAM7', 'Weight', EspFloat.new('weight')),
+    EspSubRecord.new('NAM8', 'Sound Level',
+                     EspInteger.new('sound_level', IntType.U32)),
+    # Sound overrides: CSDT header, then repeating CSDI+CSDC pairs
+    EspGroup.new('Sound Type', [
+        EspSubRecord.new('CSDT', 'Sound Type',
+                         EspInteger.new('type', IntType.U32)),
+        EspGroup.new('Sound', [
+            EspSubRecord.new('CSDI', 'Sound',
+                             EspFormID.new('sound', ['SNDR'])),
+            EspSubRecord.new('CSDC', 'Sound Chance',
+                             EspInteger.new('chance', IntType.U8)),
+        ]),
     ]),
     EspSubRecord.new('CSCR', 'Inherits Sound From',
                      EspFormID.new('sound_source', ['NPC_'])),

@@ -116,8 +116,8 @@ class TestDawnguardCrossPlugin:
         assert crossbow is not None, "DLC1CrossBow not found in Dawnguard.esm"
 
         data = crossbow['DATA']
-        assert data['damage'] > 0
-        assert data['value'] > 0
+        assert data['damage'] == 19
+        assert data['value'] == 120
 
 
     @pytest.mark.gamefiles
