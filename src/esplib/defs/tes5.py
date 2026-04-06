@@ -1371,6 +1371,345 @@ NPC_ = EspRecord.new('NPC_', 'Non-Player Character', [
 ])
 
 
+# ===== Magic Effects, Spells, and Perks =====
+
+# -- Enums for MGEF/SPEL/PERK --
+
+MagicEffectArchetypeEnum = EspEnum.new({
+    0: 'Value Modifier', 1: 'Script', 2: 'Dispel', 3: 'Cure Disease',
+    4: 'Absorb', 5: 'Dual Value Modifier', 6: 'Calm', 7: 'Demoralize',
+    8: 'Frenzy', 9: 'Disarm', 10: 'Command Summoned', 11: 'Invisibility',
+    12: 'Light', 13: 'Darkness', 14: 'Nighteye', 15: 'Lock',
+    16: 'Open', 17: 'Bound Weapon', 18: 'Summon Creature',
+    19: 'Detect Life', 20: 'Telekinesis', 21: 'Paralysis',
+    22: 'Reanimate', 23: 'Soul Trap', 24: 'Turn Undead',
+    25: 'Guide', 26: 'Werewolf Feed', 27: 'Cure Paralysis',
+    28: 'Cure Addiction', 29: 'Cure Poison', 30: 'Concussion',
+    31: 'Value and Parts', 32: 'Accumulate Magnitude',
+    33: 'Stagger', 34: 'Peak Value Modifier', 35: 'Cloak',
+    36: 'Werewolf', 37: 'Slow Time', 38: 'Rally', 39: 'Enhance Weapon',
+    40: 'Spawn Hazard', 41: 'Etherealize', 42: 'Banish',
+    43: 'Spawn Scripted Ref', 44: 'Disguise', 45: 'Grab Actor',
+    46: 'Vampire Lord',
+})
+
+CastingTypeEnum = EspEnum.new({
+    0: 'Constant Effect',
+    1: 'Fire and Forget',
+    2: 'Concentration',
+    3: 'Scroll',
+})
+
+DeliveryEnum = EspEnum.new({
+    0: 'Self',
+    1: 'Touch',
+    2: 'Aimed',
+    3: 'Target Actor',
+    4: 'Target Location',
+})
+
+SpellTypeEnum = EspEnum.new({
+    0: 'Spell',
+    1: 'Disease',
+    2: 'Power',
+    3: 'Lesser Power',
+    4: 'Ability',
+    5: 'Poison',
+    6: 'Enchantment',
+    7: 'Potion',
+    8: 'Wrist',
+    10: 'Addiction',
+    11: 'Voice',
+    12: 'Scroll',
+})
+
+MagicEffectFlags = EspFlags.new({
+    0: 'Hostile',
+    1: 'Recover',
+    2: 'Detrimental',
+    3: 'Snap to Navmesh',
+    4: 'No Hit Event',
+    5: 'Unknown 5',
+    6: 'Unknown 6',
+    7: 'Unknown 7',
+    8: 'Dispel with Keywords',
+    9: 'No Duration',
+    10: 'No Magnitude',
+    11: 'No Area',
+    12: 'FX Persist',
+    13: 'Unknown 13',
+    14: 'Gory Visuals',
+    15: 'Hide in UI',
+    16: 'Unknown 16',
+    17: 'No Recast',
+    18: 'Unknown 18',
+    19: 'Unknown 19',
+    20: 'Unknown 20',
+    21: 'Power Affects Magnitude',
+    22: 'Power Affects Duration',
+    23: 'Unknown 23',
+    24: 'Unknown 24',
+    25: 'Unknown 25',
+    26: 'Painless',
+    27: 'No Hit Effect',
+    28: 'No Death Dispel',
+})
+
+PerkEntryPointEnum = EspEnum.new({
+    0: 'Calculate Weapon Damage',
+    1: 'Calculate My Critical Hit Chance',
+    2: 'Calculate My Critical Hit Damage',
+    3: 'Calculate Weapon Attack AP Cost',
+    4: 'Calculate Mine Explode Chance',
+    5: 'Adjust Range Penalty',
+    6: 'Adjust Limb Damage',
+    7: 'Calculate Weapon Range',
+    8: 'Calculate To Hit Chance',
+    9: 'Adjust Experience Points',
+    10: 'Adjust Gained Skill Points',
+    11: 'Adjust Book Skill Points',
+    12: 'Modify Recovered Health',
+    13: 'Calculate Inventory AP Cost',
+    14: 'Get Disposition',
+    15: 'Get Should Attack',
+    16: 'Get Should Assist',
+    17: 'Calculate Buy Price',
+    18: 'Get Max Carry Weight',
+    19: 'Modify Addiction Chance',
+    20: 'Modify Addiction Duration',
+    21: 'Modify Positive Chem Duration',
+    22: 'Modify Negative Chem Duration',
+    23: 'Unknown 23',
+    24: 'Adjust Drinking Potion',
+    25: 'Unknown 25',
+    26: 'Unknown 26',
+    27: 'Activate',
+    28: 'Ignore Running During Detection',
+    29: 'Ignore Broken Lock',
+    30: 'Mod Skill Use',
+    31: 'Mod Incoming Limb Damage',
+    32: 'Mod Target Damage Resistance',
+    33: 'Mod Weapon Attack Damage',
+    34: 'Mod Incoming Damage',
+    35: 'Mod Target Damage',
+    36: 'Mod Spell Magnitude',
+    37: 'Mod Spell Duration',
+    38: 'Mod Secondary Value Weight',
+    39: 'Mod Armor Weight',
+    40: 'Mod Incoming Stagger',
+    41: 'Mod Target Stagger',
+    42: 'Mod Attack Damage',
+    43: 'Mod Incoming Damage Mult',
+    44: 'Mod Enchantment Power',
+    45: 'Mod Soul Gem Enchant',
+    46: 'Mod Soul Gem Recharge',
+    47: 'Set Sweep Attack',
+    48: 'Apply Combat Hit Spell',
+    49: 'Apply Reanimate Spell',
+    50: 'Set Boolean Graph Variable',
+    51: 'Mod Spell Casting Sound Event',
+    52: 'Mod Pickpocket Chance',
+    53: 'Mod Detection Light',
+    54: 'Mod Detection Movement',
+    55: 'Mod Soul Trap Cost',
+    56: 'Set Activate Label',
+    57: 'Mod Shout OK',
+    58: 'Mod Poison Dose Count',
+    59: 'Should Apply Place At Me',
+    60: 'Mod Armor Rating',
+    61: 'Mod Lockpick Sweet Spot',
+    62: 'Mod Sell Prices',
+    63: 'Can Pickpocket Equipped Item',
+    64: 'Mod Lockpick Level Allowed',
+    65: 'Set Lockpick Starting Arc',
+    66: 'Set Progression Picking',
+    67: 'Make Lockpicks Unbreakable',
+    68: 'Mod Alchemy Effectiveness',
+    69: 'Apply Weapon Swing Spell',
+    70: 'Mod Commanding Actor',
+    71: 'Apply Sneaking Spell',
+    72: 'Mod Player Magic Slowdown',
+    73: 'Mod Ward Magicka Absorption Pct',
+    74: 'Mod Initial Ingredient Effects Learned',
+})
+
+PerkFunctionEnum = EspEnum.new({
+    0: 'Unknown',
+    1: 'Set Value',
+    2: 'Add Value',
+    3: 'Multiply Value',
+    4: 'Add Range To Value',
+    5: 'Add Actor Value Mult',
+    6: 'Absolute Value',
+    7: 'Negative Abs Value',
+    8: 'Add Leveled List',
+    9: 'Add Activate Choice',
+    10: 'Select Spell',
+    11: 'Select Text',
+    12: 'Set to Actor Value Mult',
+    13: 'Multiply Actor Value Mult',
+    14: 'Multiply 1 + Actor Value Mult',
+    15: 'Set Text',
+})
+
+PerkEntryTypeEnum = EspEnum.new({
+    0: 'Quest + Stage',
+    1: 'Ability',
+    2: 'Entry Point',
+})
+
+
+# -- MGEF (Magic Effect) --
+
+MGEF = EspRecord.new('MGEF', 'Magic Effect', [
+    common.EDID,
+    common.VMAD,
+    common.FULL,
+    EspSubRecord.new('MDOB', 'Menu Display Object',
+                     EspFormID.new('menu_display_object', ['STAT'])),
+    common.KSIZ,
+    common.KWDA,
+    # DATA: 152-byte struct with all magic effect properties
+    EspSubRecord.new('DATA', 'Data', EspStruct.new('data', [
+        EspInteger.new('flags', IntType.U32, formatter=MagicEffectFlags),
+        EspFloat.new('base_cost'),
+        EspFormID.new('assoc_item'),
+        EspInteger.new('magic_skill', IntType.S32, formatter=common.ActorValueEnum),
+        EspInteger.new('resist_value', IntType.S32, formatter=common.ActorValueEnum),
+        EspInteger.new('counter_effect_count', IntType.U16),
+        EspByteArray.new('unused1', size=2),
+        EspFormID.new('casting_light', ['LIGH']),
+        EspFloat.new('taper_weight'),
+        EspFormID.new('hit_shader', ['EFSH']),
+        EspFormID.new('enchant_shader', ['EFSH']),
+        EspInteger.new('minimum_skill_level', IntType.U32),
+        EspInteger.new('spellmaking_area', IntType.U32),
+        EspFloat.new('spellmaking_casting_time'),
+        EspFloat.new('taper_curve'),
+        EspFloat.new('taper_duration'),
+        EspFloat.new('second_av_weight'),
+        EspInteger.new('archetype', IntType.U32, formatter=MagicEffectArchetypeEnum),
+        EspInteger.new('actor_value', IntType.S32, formatter=common.ActorValueEnum),
+        EspFormID.new('projectile', ['PROJ']),
+        EspFormID.new('explosion', ['EXPL']),
+        EspInteger.new('casting_type', IntType.U32, formatter=CastingTypeEnum),
+        EspInteger.new('delivery', IntType.U32, formatter=DeliveryEnum),
+        EspInteger.new('second_actor_value', IntType.S32, formatter=common.ActorValueEnum),
+        EspFormID.new('casting_art', ['ARTO']),
+        EspFormID.new('hit_effect_art', ['ARTO']),
+        EspFormID.new('impact_data', ['IPDS']),
+        EspFloat.new('skill_usage_multiplier'),
+        EspFormID.new('dual_casting_art', ['DUAL']),
+        EspFloat.new('dual_casting_scale'),
+        EspFormID.new('enchant_art', ['ARTO']),
+        EspFormID.new('hit_visuals', ['RFCT']),
+        EspFormID.new('enchant_visuals', ['RFCT']),
+        EspFormID.new('equip_ability', ['SPEL']),
+        EspFormID.new('image_space_modifier', ['IMAD']),
+        EspFormID.new('perk_to_apply', ['PERK']),
+        EspInteger.new('casting_sound_level', IntType.U32, formatter=common.SoundLevelEnum),
+        EspFloat.new('script_ai_score'),
+        EspFloat.new('script_ai_delay_time'),
+    ])),
+    EspSubRecord.new('SNDD', 'Sounds', EspByteArray.new('sounds')),
+    EspSubRecord.new('DNAM', 'Magic Item Description', EspByteArray.new('dnam')),
+    EspSubRecord.new('CTDA', 'Condition', EspByteArray.new('data')),
+])
+
+
+# -- SPEL (Spell) --
+
+SPEL = EspRecord.new('SPEL', 'Spell', [
+    common.EDID,
+    common.OBND,
+    common.FULL,
+    EspSubRecord.new('MDOB', 'Menu Display Object',
+                     EspFormID.new('menu_display_object', ['STAT'])),
+    common.ETYP,
+    common.DESC,
+    # SPIT: 36-byte spell data
+    EspSubRecord.new('SPIT', 'Data', EspStruct.new('spit', [
+        EspInteger.new('base_cost', IntType.U32),
+        EspInteger.new('flags', IntType.U32),
+        EspInteger.new('type', IntType.U32, formatter=SpellTypeEnum),
+        EspFloat.new('charge_time'),
+        EspInteger.new('cast_type', IntType.U32, formatter=CastingTypeEnum),
+        EspInteger.new('target_type', IntType.U32, formatter=DeliveryEnum),
+        EspFloat.new('cast_duration'),
+        EspFloat.new('range'),
+        EspFormID.new('half_cost_perk', ['PERK']),
+    ])),
+    # Effects (repeating EFID + EFIT pairs, same pattern as ALCH)
+    EspGroup.new('Effect', [
+        EspSubRecord.new('EFID', 'Base Effect',
+                         EspFormID.new('base_effect', ['MGEF'])),
+        EspSubRecord.new('EFIT', 'Effect Data', EspStruct.new('efit', [
+            EspFloat.new('magnitude'),
+            EspInteger.new('area', IntType.U32),
+            EspInteger.new('duration', IntType.U32),
+        ])),
+        EspSubRecord.new('CTDA', 'Condition', EspByteArray.new('data')),
+    ]),
+])
+
+
+# -- PERK --
+
+PERK = EspRecord.new('PERK', 'Perk', [
+    common.EDID,
+    common.VMAD,
+    common.FULL,
+    common.DESC,
+    common.ICON,
+    EspSubRecord.new('MICO', 'Large Icon Filename',
+                     EspString.new('mico', 'zstring')),
+    # CTDA conditions at the perk level (optional, repeating)
+    EspSubRecord.new('CTDA', 'Perk Condition', EspByteArray.new('data')),
+    # DATA: 5 bytes — Trait, Level, Num Ranks, Playable, Hidden
+    EspSubRecord.new('DATA', 'Data', EspStruct.new('data', [
+        EspInteger.new('trait', IntType.U8),
+        EspInteger.new('level', IntType.U8),
+        EspInteger.new('num_ranks', IntType.U8),
+        EspInteger.new('playable', IntType.U8),
+        EspInteger.new('hidden', IntType.U8),
+    ])),
+    EspSubRecord.new('NNAM', 'Next Perk', EspFormID.new('next_perk', ['PERK'])),
+    # Effects (repeating: PRKE header -> DATA -> conditions -> params -> PRKF end)
+    EspGroup.new('Effect', [
+        # PRKE: 3 bytes — Type, Rank, Priority
+        EspSubRecord.new('PRKE', 'Header', EspStruct.new('prke', [
+            EspInteger.new('type', IntType.U8, formatter=PerkEntryTypeEnum),
+            EspInteger.new('rank', IntType.U8),
+            EspInteger.new('priority', IntType.U8),
+        ])),
+        # DATA: 3 bytes for Entry Point type — Entry Point, Function, Tab Count
+        EspSubRecord.new('DATA', 'Effect Data', EspStruct.new('effect_data', [
+            EspInteger.new('entry_point', IntType.U8, formatter=PerkEntryPointEnum),
+            EspInteger.new('function', IntType.U8, formatter=PerkFunctionEnum),
+            EspInteger.new('perk_condition_tab_count', IntType.U8),
+        ])),
+        # PRKC + CTDA pairs (perk conditions, optional repeating)
+        EspSubRecord.new('PRKC', 'Run On', EspInteger.new('tab_index', IntType.S8)),
+        EspSubRecord.new('CTDA', 'Condition', EspByteArray.new('data')),
+        EspSubRecord.new('CIS1', 'Condition Item String 1',
+                         EspString.new('str', 'zstring')),
+        EspSubRecord.new('CIS2', 'Condition Item String 2',
+                         EspString.new('str', 'zstring')),
+        # Function parameters
+        EspSubRecord.new('EPFT', 'Function Parameter Type',
+                         EspInteger.new('param_type', IntType.U8)),
+        EspSubRecord.new('EPFD', 'Function Parameter Data',
+                         EspByteArray.new('data')),
+        EspSubRecord.new('EPF2', 'Button Label',
+                         EspString.new('label', 'zstring')),
+        EspSubRecord.new('EPF3', 'Script Flags',
+                         EspByteArray.new('data')),
+        # End marker
+        EspSubRecord.new('PRKF', 'End Marker', EspByteArray.new('data')),
+    ]),
+])
+
+
 # ---------------------------------------------------------------------------
 # Register all definitions
 # ---------------------------------------------------------------------------
@@ -1385,6 +1724,7 @@ def register():
         LVLI, LVLN, COBJ, FACT, NPC_,
         HDPT, ARMA, RACE, TXST,
         DIAL, INFO,
+        MGEF, SPEL, PERK,
     ]:
         registry.register(record_def)
 
