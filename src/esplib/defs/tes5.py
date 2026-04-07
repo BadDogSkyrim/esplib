@@ -360,6 +360,25 @@ _LEVELED_ENTRY_STRUCT = EspStruct.new('entry', [
 ])
 
 
+KEYM = EspRecord.new('KEYM', 'Key', [
+    common.EDID,
+    common.VMAD,
+    common.OBND,
+    common.FULL,
+    common.MODL,
+    common.MODT,
+    common.ICON,
+    common.YNAM,
+    common.ZNAM,
+    common.KSIZ,
+    common.KWDA,
+    EspSubRecord.new('DATA', 'Data', EspStruct.new('data', [
+        EspInteger.new('value', IntType.S32),
+        EspFloat.new('weight'),
+    ])),
+])
+
+
 LVLI = EspRecord.new('LVLI', 'Leveled Item', [
     common.EDID,
     common.OBND,
@@ -1710,6 +1729,106 @@ PERK = EspRecord.new('PERK', 'Perk', [
 ])
 
 
+LockLevelEnum = EspEnum.new({
+    0: 'None',
+    1: 'Novice',
+    25: 'Apprentice',
+    50: 'Adept',
+    75: 'Expert',
+    100: 'Master',
+    255: 'Requires Key',
+})
+
+LockFlagsEnum = EspFlags.new([
+    'Unknown 0',
+    'Unknown 1',
+    'Leveled Lock',
+])
+
+# ===== Placed Object Reference =====
+# Subset of REFR subrecords — covers the fields we need for door gating
+# and general reference manipulation. Not exhaustive.
+REFR = EspRecord.new('REFR', 'Placed Object', [
+    common.EDID,
+    common.VMAD,
+    EspSubRecord.new('NAME', 'Base',
+                     EspFormID.new('base', [
+                         'ACTI', 'ADDN', 'ALCH', 'AMMO', 'APPA', 'ARMO',
+                         'ARTO', 'ASPC', 'BOOK', 'CONT', 'DOOR', 'FLOR',
+                         'FURN', 'IDLM', 'INGR', 'KEYM', 'LIGH', 'MISC',
+                         'MSTT', 'SCRL', 'SLGM', 'SOUN', 'STAT', 'TACT',
+                         'TREE', 'TXST', 'WEAP',
+                     ])),
+    EspSubRecord.new('XSCL', 'Scale',
+                     EspFloat.new('scale')),
+    # Teleport destination (load doors)
+    EspSubRecord.new('XTEL', 'Teleport Destination', EspStruct.new('teleport', [
+        EspFormID.new('door', ['REFR']),
+        EspFloat.new('pos_x'),
+        EspFloat.new('pos_y'),
+        EspFloat.new('pos_z'),
+        EspFloat.new('rot_x'),
+        EspFloat.new('rot_y'),
+        EspFloat.new('rot_z'),
+        EspInteger.new('flags', IntType.U32),
+    ])),
+    # Lock data
+    EspSubRecord.new('XLOC', 'Lock Data', EspStruct.new('lock', [
+        EspInteger.new('level', IntType.U8, formatter=LockLevelEnum),
+        EspByteArray.new('unused1', size=3),
+        EspFormID.new('key', ['KEYM']),
+        EspInteger.new('flags', IntType.U8, formatter=LockFlagsEnum),
+        EspByteArray.new('unused2', size=3),
+        EspByteArray.new('unused3', size=8),
+    ])),
+    # Encounter zone
+    EspSubRecord.new('XEZN', 'Encounter Zone',
+                     EspFormID.new('encounter_zone', ['ECZN'])),
+    # Ownership
+    EspSubRecord.new('XOWN', 'Owner',
+                     EspFormID.new('owner', ['NPC_', 'FACT'])),
+    # Enable parent
+    EspSubRecord.new('XESP', 'Enable Parent', EspStruct.new('enable_parent', [
+        EspFormID.new('reference', ['REFR', 'PLYR', 'ACHR']),
+        EspInteger.new('flags', IntType.U32),
+    ])),
+    # Linked references
+    EspSubRecord.new('XLKR', 'Linked Reference', EspStruct.new('linked_ref', [
+        EspFormID.new('keyword_ref', ['KYWD']),
+        EspFormID.new('ref', ['REFR', 'ACHR']),
+    ])),
+    # Map marker
+    EspSubRecord.new('XMRK', 'Map Marker Data', EspByteArray.new('data', size=0)),
+    # Navmesh door link
+    EspSubRecord.new('XNDP', 'Navmesh Door Link', EspStruct.new('navmesh_link', [
+        EspFormID.new('navmesh', ['NAVM']),
+        EspInteger.new('triangle', IntType.S16),
+        EspByteArray.new('unused', size=2),
+    ])),
+    # Location reference
+    EspSubRecord.new('XLRL', 'Location Reference',
+                     EspFormID.new('location', ['LCRT', 'LCTN'])),
+    # Persist location
+    EspSubRecord.new('XLCN', 'Persist Location',
+                     EspFormID.new('persist_location', ['LCTN'])),
+    # Radius
+    EspSubRecord.new('XRDS', 'Radius',
+                     EspFloat.new('radius')),
+    # Linked ref types
+    EspSubRecord.new('XLRT', 'Location Ref Type',
+                     EspFormID.new('ref_type', ['LCRT'])),
+    # Position and rotation (required, always last)
+    EspSubRecord.new('DATA', 'Position/Rotation', EspStruct.new('pos_rot', [
+        EspFloat.new('pos_x'),
+        EspFloat.new('pos_y'),
+        EspFloat.new('pos_z'),
+        EspFloat.new('rot_x'),
+        EspFloat.new('rot_y'),
+        EspFloat.new('rot_z'),
+    ])),
+])
+
+
 # ---------------------------------------------------------------------------
 # Register all definitions
 # ---------------------------------------------------------------------------
@@ -1720,11 +1839,12 @@ def register():
 
     for record_def in [
         GMST, GLOB, KYWD, FLST,
-        WEAP, ARMO, ALCH, AMMO, BOOK, MISC,
+        WEAP, ARMO, ALCH, AMMO, BOOK, MISC, KEYM,
         LVLI, LVLN, COBJ, FACT, NPC_,
         HDPT, ARMA, RACE, TXST,
         DIAL, INFO,
         MGEF, SPEL, PERK,
+        REFR,
     ]:
         registry.register(record_def)
 
