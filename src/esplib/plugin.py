@@ -362,6 +362,125 @@ class Plugin:
 
         self.modified = True
 
+    def add_record_override(self, record: Record,
+                            source_plugin: 'Plugin') -> None:
+        """Add an override record, placing it in the same group hierarchy
+        as the source record in the source plugin.
+
+        This is essential for REFR, ACHR, and other placed records that
+        must be inside the correct cell/worldspace group structure.
+        Falls back to flat add_record if the source group path can't
+        be found.
+        """
+        # Find the group path to this record in the source plugin
+        path = self._find_group_path(source_plugin.groups,
+                                     record.form_id.value)
+        if not path:
+            # Fallback: use flat grouping
+            self.add_record(record)
+            return
+
+        # Register in indexes (same as add_record)
+        if record.form_id.value == 0:
+            record.form_id = self.get_next_form_id()
+        if record.form_id.file_index == self._LOCAL_SENTINEL:
+            self._new_records.append(record)
+        if self._game_registry:
+            if record.version == 44:
+                record.version = self._RECORD_VERSIONS.get(
+                    self._game_registry.game_id, 44)
+            if record.schema is None:
+                schema = self._game_registry.get(record.signature)
+                if schema is not None:
+                    record.bind_schema(schema)
+        self.records.append(record)
+        self._form_id_index[record.form_id.value] = record
+        if record.editor_id:
+            self._editor_id_index[record.editor_id.lower()] = record
+        if record.signature not in self._signature_index:
+            self._signature_index[record.signature] = []
+        self._signature_index[record.signature].append(record)
+
+        # Walk/create the group hierarchy, adding parent records as needed
+        # (e.g., WRLD and CELL records that the engine requires alongside
+        # their child groups)
+        current_groups = self.groups
+        for step in path:
+            group_type = step['group_type']
+            label = step['label']
+            parent_record = step.get('parent_record')
+
+            target = None
+            for g in current_groups:
+                if isinstance(g, GroupRecord) and \
+                   g.group_type == group_type and g.label == label:
+                    target = g
+                    break
+
+            if target is None:
+                # Add parent record (WRLD, CELL) before its child group
+                # if one exists and hasn't been added yet
+                if parent_record is not None:
+                    pr_fid = parent_record.form_id.value
+                    already_added = any(
+                        hasattr(r, 'form_id') and r.form_id.value == pr_fid
+                        for r in current_groups)
+                    if not already_added:
+                        # Clone minimal override of the parent record
+                        pr_copy = parent_record.copy()
+                        current_groups.append(pr_copy)
+
+                target = GroupRecord(group_type, label)
+                if current_groups is self.groups:
+                    self.groups.append(target)
+                else:
+                    current_groups.append(target)
+            current_groups = target.records
+
+        # Place the record in the deepest group
+        current_groups.append(record)
+        self.modified = True
+
+    @staticmethod
+    def _find_group_path(groups, target_form_id,
+                         _path=None) -> list:
+        """Find the group hierarchy path to a record by FormID.
+
+        Returns a list of dicts:
+          {'group_type': int, 'label': ..., 'parent_record': Record|None}
+        The parent_record is a non-group record that immediately precedes
+        a child group at the same level (e.g., WRLD before type-1 groups,
+        CELL before type-6/8/9 groups). These must be included in override
+        plugins for the engine to correctly process the group.
+        """
+        if _path is None:
+            _path = []
+        # Track non-group records at this level that may be parents
+        last_record = None
+        for g in groups:
+            if not isinstance(g, GroupRecord):
+                if hasattr(g, 'form_id'):
+                    if g.form_id.value == target_form_id:
+                        return _path  # found the target
+                    last_record = g
+                continue
+            # For child groups (type 1,6,8,9), the preceding record
+            # at this level is the parent (WRLD, CELL)
+            parent_rec = None
+            if g.group_type in (1, 6, 8, 9):
+                parent_rec = last_record
+
+            new_path = _path + [{
+                'group_type': g.group_type,
+                'label': g.label,
+                'parent_record': parent_rec,
+            }]
+            result = Plugin._find_group_path(
+                g.records, target_form_id, new_path)
+            if result is not None and len(result) >= len(new_path):
+                return result
+        return []
+
     def remove_record(self, record: Record) -> bool:
         with self._lock:
             if record not in self.records:
