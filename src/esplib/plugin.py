@@ -426,8 +426,52 @@ class Plugin:
                         hasattr(r, 'form_id') and r.form_id.value == pr_fid
                         for r in current_groups)
                     if not already_added:
-                        # Clone minimal override of the parent record
                         pr_copy = parent_record.copy()
+                        # Remap subrecord FormIDs on the cloned parent
+                        # (LTMP, XLCN, XEZN, XCMO, XCAS, XCCM, XCIM,
+                        # XCWT, XOWN on CELLs; WNAM/SNAM/ZNAM etc. on
+                        # WRLDs). Without this, any FormID subrecord
+                        # with a master index pointing at the source's
+                        # self-index carries that raw index through to
+                        # the destination, where it now aliases a
+                        # different master. The engine half-loads the
+                        # cell (skybox only) at runtime because e.g.
+                        # its LTMP resolves against the wrong plugin.
+                        if source_plugin is not None:
+                            self._remap_subrecord_formids(
+                                pr_copy, source_plugin)
+                        # Translate cloned parent record's localized
+                        # subrecords (e.g. CELL.FULL). Without this, a
+                        # cloned parent CELL from a localized source
+                        # plugin (Skyrim.esm) carries a 4-byte string
+                        # ID that's meaningless in our destination,
+                        # corrupting the engine's name-resolution
+                        # cascade (door activation prompts, etc.).
+                        #
+                        # Branch on destination localization:
+                        # - non-localized: delocalize -> inline text
+                        #   (mirrors copy_record's delocalize step)
+                        # - localized: re-localize -> new local
+                        #   string ID + entry in our own string table
+                        if source_plugin is not None:
+                            if not self.is_localized:
+                                ps = source_plugin.plugin_set
+                                orig_norm = None
+                                if ps is not None:
+                                    orig_norm = source_plugin.normalize_form_id(
+                                        parent_record.form_id)
+                                self._delocalize_strings(
+                                    pr_copy, source_plugin, ps,
+                                    chain_form_id=orig_norm)
+                            else:
+                                self._localize_strings(pr_copy, source_plugin)
+                        # Also remap its own FormID from the source's
+                        # master ordering to ours (same treatment the
+                        # override record itself receives below).
+                        remapped_pr_fid = self.remap_formid(
+                            pr_copy.form_id.value, source_plugin)
+                        if remapped_pr_fid != pr_copy.form_id.value:
+                            pr_copy.form_id = FormID(remapped_pr_fid)
                         current_groups.append(pr_copy)
 
                 target = GroupRecord(group_type, label)
@@ -717,6 +761,19 @@ class Plugin:
     # Subrecord signatures that contain localized string IDs
     _LOCALIZED_STRING_SIGS = {'FULL', 'SHRT', 'DESC', 'NNAM', 'ITXT'}
 
+    # Maps a localized subrecord signature to which of the three string
+    # tables it lives in. Verified against vanilla Skyrim.esm. Note that
+    # MESG ITXT lives in .STRINGS (not .ILSTRINGS, despite what the
+    # extension suggests). .ILSTRINGS is almost exclusively used for
+    # INFO RNAM (dialogue responses).
+    _LOCALIZED_STRING_TABLE_TYPE = {
+        'FULL': 'strings',
+        'SHRT': 'strings',
+        'ITXT': 'strings',
+        'DESC': 'dlstrings',
+        'NNAM': 'dlstrings',
+    }
+
     # Fallback set for records without a schema.
     _FORMID_SUBRECORD_SIGS_FALLBACK = frozenset({
         'LNAM', 'KWDA', 'RNAM', 'PNAM', 'DOFT', 'FTST', 'TPLT',
@@ -725,6 +782,14 @@ class Plugin:
         'DFTF', 'MPAI', 'TIND', 'TINC', 'HEAD', 'NAM8', 'MODL',
         'EITM', 'BAMT', 'BIDS', 'ETYP', 'NAM4', 'NAM5', 'YNAM',
         'CRDT', 'EFID', 'ATKR', 'HCLF', 'DPLT', 'SOFT',
+        # CELL subrecord FormIDs (all 4-byte single refs). Without
+        # these, cloning a parent CELL for REFR override leaves its
+        # lighting/location/zone/music/acoustic/climate/image-space/
+        # water references pointing at wrong master indices after
+        # master-list reordering, which causes the engine to half-
+        # load the cell (skybox only) at runtime.
+        'LTMP', 'XLCN', 'XEZN', 'XCMO', 'XCAS', 'XCCM', 'XCIM',
+        'XCWT', 'XOWN',
     })
 
     def copy_record(self, record: 'Record',
@@ -989,6 +1054,59 @@ class Plugin:
                         string_id, record.editor_id, sr.signature)
                     sr.data = bytearray(b'\x00')
                     sr.modified = True
+
+    def _localize_strings(self, record: 'Record',
+                          source: Optional['Plugin']) -> None:
+        """Convert source-plugin string IDs to fresh local string IDs.
+
+        Inverse of _delocalize_strings. Used when copying records from a
+        localized source plugin into a localized destination plugin: the
+        source's 4-byte string IDs are meaningless in our string table,
+        so we resolve each one to text via the source's strings table,
+        allocate a new ID in our own table, and write the new ID into
+        the subrecord.
+
+        Requires self.is_localized == True. Lazy-initializes
+        self.string_tables if not already set up.
+        """
+        from .strings import StringTable, StringTableManager
+        if source is None or not source.is_localized:
+            return
+        if self.string_tables is None:
+            self.string_tables = StringTableManager()
+        mgr = self.string_tables
+
+        for sr in record.subrecords:
+            if sr.signature not in self._LOCALIZED_STRING_SIGS:
+                continue
+            if sr.size != 4:
+                continue
+            src_sid = sr.get_uint32()
+            if src_sid == 0:
+                continue
+            text = source.resolve_string(src_sid)
+            if text is None:
+                continue
+            text = text.rstrip('\x00')
+
+            # Pick the destination table for this signature
+            attr = self._LOCALIZED_STRING_TABLE_TYPE.get(sr.signature)
+            if attr is None:
+                continue
+            table = getattr(mgr, attr)
+            if table is None:
+                ttype = {
+                    'strings': StringTable.STRINGS,
+                    'dlstrings': StringTable.DLSTRINGS,
+                    'ilstrings': StringTable.ILSTRINGS,
+                }[attr]
+                table = StringTable(ttype)
+                setattr(mgr, attr, table)
+
+            new_sid = table.allocate_id()
+            table.set(new_sid, text)
+            sr.data = bytearray(struct.pack('<I', new_sid))
+            sr.modified = True
 
     # Sentinel file index for new local records. Using 0xFF avoids
     # collisions with master indices (which grow from 0). The real
