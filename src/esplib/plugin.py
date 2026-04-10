@@ -362,6 +362,25 @@ class Plugin:
 
         self.modified = True
 
+    def clone_for_override(self, source_record: Record,
+                           source_plugin: 'Plugin') -> Record:
+        """Clone a record from another plugin in preparation for an override.
+
+        Deep-copies the source record and remaps master indices in
+        subrecord FormIDs (NAME, XTEL, KWDA, VMAD, etc.) from the source
+        plugin's master ordering to ours. The record's own FormID is
+        left in source-plugin space — add_record_override remaps it
+        after using it to find the source group hierarchy.
+
+        Does NOT add the cloned record to the plugin — the caller is
+        expected to do any further setup (e.g. attaching XLOC via
+        write_form_id) and then call add_record_override(clone,
+        source_plugin) to place it in the right group hierarchy.
+        """
+        new_record = source_record.copy()
+        self._remap_subrecord_formids(new_record, source_plugin)
+        return new_record
+
     def add_record_override(self, record: Record,
                             source_plugin: 'Plugin') -> None:
         """Add an override record, placing it in the same group hierarchy
@@ -372,13 +391,25 @@ class Plugin:
         Falls back to flat add_record if the source group path can't
         be found.
         """
-        # Find the group path to this record in the source plugin
+        # Find the group path to this record in the source plugin.
+        # Path lookup uses the source-plugin FormID; remap to our master
+        # ordering happens after the lookup so callers don't have to
+        # juggle two FormIDs.
         path = self._find_group_path(source_plugin.groups,
                                      record.form_id.value)
         if not path:
             # Fallback: use flat grouping
             self.add_record(record)
             return
+
+        # Remap the record's own FormID from the source's master ordering
+        # to ours (e.g. Dawnguard.esm at index 0 in source -> index 1
+        # here). Subrecord FormIDs are remapped separately by
+        # clone_for_override before this call.
+        if record.form_id.value != 0:
+            remapped = self.remap_formid(record.form_id.value, source_plugin)
+            if remapped != record.form_id.value:
+                record.form_id = FormID(remapped)
 
         # Register in indexes (same as add_record)
         if record.form_id.value == 0:
