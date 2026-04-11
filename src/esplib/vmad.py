@@ -214,14 +214,29 @@ class VmadData:
         for script in self.scripts:
             _write_script(w, script, self.obj_format)
 
-        if self.fragment_data is not None and record_sig:
-            _write_fragments(w, self.fragment_data, record_sig,
-                             self.obj_format)
+        if record_sig == 'QUST':
+            # QUST layout requires the fragment data block (even if
+            # empty) before any alias scripts. A quest may have:
+            # - fragments + alias scripts (typical scripted quest)
+            # - alias scripts only (our trigger-gate quests, no stages)
+            # - fragments only
+            # - neither
+            if self.fragment_data is not None:
+                _write_fragments(w, self.fragment_data, 'QUST',
+                                 self.obj_format)
+            elif self.alias_scripts:
+                # Empty placeholder: extra_bind(0) + frag_count(0) + name("")
+                w.int8(0)
+                w.uint16(0)
+                w.wstring("")
 
-            if record_sig == 'QUST':
+            if self.alias_scripts or self.fragment_data is not None:
                 w.uint16(len(self.alias_scripts))
                 for alias in self.alias_scripts:
                     _write_alias_scripts(w, alias, self.obj_format)
+        elif self.fragment_data is not None and record_sig:
+            _write_fragments(w, self.fragment_data, record_sig,
+                             self.obj_format)
 
         return w.get_bytes()
 
