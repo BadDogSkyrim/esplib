@@ -3,7 +3,7 @@
 import csv
 import json
 import sys
-from esplib import Plugin, FormID
+from esplib import Plugin, BaseFormID
 from esplib.defs.game import GameRegistry
 
 
@@ -57,7 +57,7 @@ def _flatten_value(value, prefix=''):
 
 def _format_value(v):
     """Format a value for display."""
-    if isinstance(v, FormID):
+    if isinstance(v, BaseFormID):
         return str(v)
     if isinstance(v, bytes):
         if len(v) <= 16:
@@ -68,7 +68,7 @@ def _format_value(v):
 
 def _make_serializable(obj):
     """Convert an object to JSON-serializable form."""
-    if isinstance(obj, FormID):
+    if isinstance(obj, BaseFormID):
         return str(obj)
     if isinstance(obj, bytes):
         if len(obj) <= 64:
