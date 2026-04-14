@@ -67,6 +67,7 @@ class FlagSet:
         flags.Female = True       # write
         flags['Female']           # read by original name
         flags['Non-Equippable']   # read by original name
+        flags.NonEquippable        # read by normalized attribute
         'Female' in flags         # True if the flag is set
         int(flags)                # raw integer value
         for name in flags:        # iterate over set flag names
