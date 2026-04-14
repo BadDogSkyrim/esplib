@@ -7,7 +7,7 @@ and other automation tools.
 import struct
 from typing import List, Optional, Union
 from .record import Record, SubRecord
-from .utils import FormID
+from .utils import FormID, BaseFormID
 
 
 # ---------------------------------------------------------------------------
@@ -33,25 +33,25 @@ def flst_forms(record: Record) -> List[FormID]:
     return result
 
 
-def flst_contains(record: Record, form_id: Union[FormID, int]) -> bool:
+def flst_contains(record: Record, form_id: Union[BaseFormID, int]) -> bool:
     """Check if a FormList contains a specific FormID."""
-    target = form_id.value if isinstance(form_id, FormID) else form_id
+    target = form_id.value if isinstance(form_id, BaseFormID) else form_id
     return any(sr.get_uint32() == target for sr in record.subrecords
                if sr.signature == 'LNAM')
 
 
-def flst_add(record: Record, form_id: Union[FormID, int]) -> None:
+def flst_add(record: Record, form_id: Union[BaseFormID, int]) -> None:
     """Append a FormID to a FormList (no dedup -- caller checks if needed)."""
-    fid = form_id if isinstance(form_id, FormID) else FormID(form_id)
+    fid = form_id if isinstance(form_id, BaseFormID) else FormID(form_id)
     record.add_subrecord('LNAM', struct.pack('<I', fid.value))
 
 
-def flst_remove(record: Record, form_id: Union[FormID, int]) -> bool:
+def flst_remove(record: Record, form_id: Union[BaseFormID, int]) -> bool:
     """Remove the first occurrence of a FormID from a FormList.
 
     Returns True if found and removed, False otherwise.
     """
-    target = form_id.value if isinstance(form_id, FormID) else form_id
+    target = form_id.value if isinstance(form_id, BaseFormID) else form_id
     for sr in record.subrecords:
         if sr.signature == 'LNAM' and sr.get_uint32() == target:
             record.remove_subrecord(sr)
@@ -83,7 +83,7 @@ def glob_set_value(record: Record, value: float) -> None:
 
 
 def glob_copy_as(record: Record, new_editor_id: str,
-                 new_form_id: Union[FormID, int]) -> Record:
+                 new_form_id: Union[BaseFormID, int]) -> Record:
     """Copy a GLOB record with a new EditorID and FormID."""
     new = record.copy()
     new.form_id = FormID(new_form_id) if isinstance(new_form_id, int) else new_form_id

@@ -358,7 +358,7 @@ class TestSkyrimFieldValues:
     @pytest.mark.slow
     def test_all_weap_resolve(self, skyrim):
         """All WEAP records in Skyrim.esm resolve without errors."""
-        weapons = skyrim.get_records_by_signature('WEAP')
+        weapons = list(skyrim.get_records_by_signature('WEAP'))
         assert len(weapons) > 0
 
         errors = []
@@ -375,7 +375,7 @@ class TestSkyrimFieldValues:
     @pytest.mark.slow
     def test_all_armo_resolve(self, skyrim):
         """All ARMO records in Skyrim.esm resolve without errors."""
-        armors = skyrim.get_records_by_signature('ARMO')
+        armors = list(skyrim.get_records_by_signature('ARMO'))
         assert len(armors) > 0
 
         errors = []

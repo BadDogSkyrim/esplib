@@ -971,20 +971,23 @@ QUST = EspRecord.new('QUST', 'Quest', [
 ])
 
 
+_ACBS_FLAGS = EspFlags.new({
+    0: 'Female', 1: 'Essential', 2: 'Is CharGen Face Preset',
+    3: 'Respawn', 4: 'Auto-calc Stats', 5: 'Unique',
+    6: "Doesn't Affect Stealth Meter", 7: 'PC Level Mult',
+    8: 'Use Template', 11: 'Protected', 14: 'Summonable',
+    16: "Doesn't Bleed", 18: 'Bleedout Override',
+    19: 'Opposite Gender Anims', 20: 'Simple Actor',
+    23: 'Is Ghost', 28: 'Invulnerable',
+})
+ACBS = _ACBS_FLAGS.constants()
+
 NPC_ = EspRecord.new('NPC_', 'Non-Player Character', [
     common.EDID,
     common.VMAD,
     common.OBND,
     EspSubRecord.new('ACBS', 'Configuration', EspStruct.new('acbs', [
-        EspInteger.new('flags', IntType.U32, formatter=EspFlags.new({
-            0: 'Female', 1: 'Essential', 2: 'Is CharGen Face Preset',
-            3: 'Respawn', 4: 'Auto-calc Stats', 5: 'Unique',
-            6: "Doesn't Affect Stealth Meter", 7: 'PC Level Mult',
-            8: 'Use Template', 11: 'Protected', 14: 'Summonable',
-            16: "Doesn't Bleed", 18: 'Bleedout Override',
-            19: 'Opposite Gender Anims', 20: 'Simple Actor',
-            23: 'Is Ghost', 28: 'Invulnerable',
-        })),
+        EspInteger.new('flags', IntType.U32, formatter=_ACBS_FLAGS),
         EspInteger.new('magicka_offset', IntType.S16),
         EspInteger.new('stamina_offset', IntType.S16),
         EspInteger.new('level', IntType.U16),

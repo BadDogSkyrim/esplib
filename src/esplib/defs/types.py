@@ -24,7 +24,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
-from ..utils import BinaryReader, BinaryWriter, FormID
+from ..utils import BinaryReader, BinaryWriter, FormID, BaseFormID
 from ..exceptions import ParseError
 from .context import EspContext
 
@@ -119,6 +119,23 @@ class FlagSet:
         return NotImplemented
 
 
+class FlagConst:
+    """Named flag constants for building flag values.
+
+    Each attribute is the bit mask (int), so they can be OR'd together:
+        ACBS.Female | ACBS.Essential  # -> 0x03
+    """
+
+    def __init__(self, names: Dict[int, str]):
+        self._names = names
+        for bit, name in names.items():
+            attr = name.replace(' ', '_').replace("'", '').replace('-', '_')
+            object.__setattr__(self, attr, 1 << bit)
+
+    def __repr__(self) -> str:
+        return f"FlagConst({list(self._names.values())})"
+
+
 @dataclass
 class EspFlags:
     """Bit flag names for an integer field."""
@@ -128,6 +145,11 @@ class EspFlags:
     @classmethod
     def new(cls, names: Dict[int, str]) -> EspFlags:
         return cls(names=names)
+
+
+    def constants(self) -> FlagConst:
+        """Create a FlagConst namespace for building flag values."""
+        return FlagConst(self.names)
 
 
     def decode(self, value: int) -> FlagSet:
@@ -329,8 +351,8 @@ class EspFormID:
     def from_bytes(self, reader: BinaryReader, ctx: EspContext = None) -> FormID:
         return FormID(struct.unpack('<I', reader.read_bytes(4))[0])
 
-    def to_bytes(self, value: Union[FormID, int]) -> bytes:
-        if isinstance(value, FormID):
+    def to_bytes(self, value: Union[BaseFormID, int]) -> bytes:
+        if isinstance(value, BaseFormID):
             return struct.pack('<I', value.value)
         return struct.pack('<I', value)
 

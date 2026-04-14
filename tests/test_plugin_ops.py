@@ -7,7 +7,7 @@ import tempfile
 import pytest
 from pathlib import Path
 
-from esplib import Plugin, Record, FormID
+from esplib import Plugin, Record, FormID, AbsoluteFormID
 from esplib.record import SubRecord
 from esplib.game_discovery import find_game
 
@@ -741,7 +741,8 @@ class TestPluginSetSkyrim:
 
 
 class TestStructRemapFormID:
-    """Plugin.remap_formid() translates FormIDs between master lists."""
+    """Plugin.remap_formid() translates FormIDs between master lists. Not generally
+    needed -- use copy_record() and PluginSet for most FormID translations."""
 
 
     def test_remap_local_to_master(self):
@@ -831,39 +832,35 @@ class TestCopyRecordPluginSet:
 
     def _make_cc_npc(self, cc_plugin):
         """Create a synthetic NPC with subrecords that contain FormIDs
-        pointing to records local to the CC plugin (file_index = len(masters)).
+        pointing to records local to the CC plugin, plus the referenced
+        records so FormIDs can be resolved by editor ID.
         """
         local_fi = len(cc_plugin.header.masters)
 
-        rec = Record('NPC_', FormID((local_fi << 24) | 0x0009B8), 0)
-        rec.schema = cc_plugin._game_registry.get('NPC_')
-        rec.plugin = cc_plugin
+        def local_fid(object_index):
+            return FormID((local_fi << 24) | object_index)
 
-        # EDID
-        rec.add_subrecord('EDID', b'TestCCNPC\x00')
+        # Referenced records
+        cc_plugin.new_record('FACT', edid='TestCCFaction', form_id=0x00083D)
+        cc_plugin.new_record('NPC_', edid='TestCCTemplate', form_id=0x0009B7)
+        cc_plugin.new_record('ARMO', edid='TestCCItem', form_id=0x0009DB)
+        cc_plugin.new_record('OTFT', edid='TestCCOutfit', form_id=0x000A00)
 
-        # SNAM — struct: FormID(4) + rank(1) + unused(3) = 8 bytes
-        faction_fid = (local_fi << 24) | 0x00083D
-        rec.add_subrecord('SNAM', struct.pack('<IbBBB', faction_fid, 0, 0, 0, 0))
+        # The NPC record itself
+        rec = cc_plugin.new_record('NPC_', edid='TestCCNPC', form_id=0x0009B8)
 
-        # TPLT — simple FormID
-        template_fid = (local_fi << 24) | 0x0009B7
-        rec.add_subrecord('TPLT', struct.pack('<I', template_fid))
+        # Schema-aware field writes
+        rec['SNAM'] = {'faction': local_fid(0x00083D), 'rank': 0}
+        rec['TPLT'] = local_fid(0x0009B7)
+        rec['DOFT'] = local_fid(0x000A00)
 
-        # CNTO — struct: FormID(4) + count(4) = 8 bytes
-        # First item: local to CC plugin
-        item_local = (local_fi << 24) | 0x0009DB
-        rec.add_subrecord('CNTO', struct.pack('<Ii', item_local, 1))
+        # CNTO is repeating — first item local, second from Skyrim.esm
+        cnto_member = rec.schema.get_member('CNTO')
+        rec.add_subrecord('CNTO', cnto_member.to_subrecord_data(
+            {'item': local_fid(0x0009DB), 'count': 1}))
+        rec.add_subrecord('CNTO', cnto_member.to_subrecord_data(
+            {'item': FormID(0x00037C2B), 'count': 3}))
 
-        # Second item: from Skyrim.esm (master index 0)
-        item_skyrim = (0 << 24) | 0x037C2B
-        rec.add_subrecord('CNTO', struct.pack('<Ii', item_skyrim, 3))
-
-        # DOFT — simple FormID
-        outfit_fid = (local_fi << 24) | 0x000A00
-        rec.add_subrecord('DOFT', struct.pack('<I', outfit_fid))
-
-        cc_plugin.add_record(rec)
         return rec
 
 
@@ -895,18 +892,14 @@ class TestCopyRecordPluginSet:
         cc_loaded = ps.get_plugin('ccTest.esm')
         assert cc_loaded is not None
 
-        npc_rec = None
-        for r in cc_loaded.get_records_by_signature('NPC_'):
-            if r.editor_id == 'TestCCNPC':
-                npc_rec = r
-                break
+        npc_rec = cc_loaded.get_record_by_editor_id('TestCCNPC')
         assert npc_rec is not None
 
         # Create patch and copy
         patch = Plugin.new_plugin(tmp_path / 'Patch.esp')
         patch.plugin_set = ps
 
-        patched = patch.copy_record(npc_rec, plugin_set=ps)
+        patched = patch.copy_record(npc_rec)
 
         # Verify: ccTest.esm should be a master of the patch
         cc_master_idx = None
@@ -959,8 +952,9 @@ class TestCopyRecordPluginSet:
 
 
     def test_cc_npc_survives_save_reload(self, tmp_path):
-        """FormIDs remain valid after save and reload."""
-        from esplib import PluginSet, LoadOrder
+        """FormIDs remain valid after save and reload — resolved references
+        point to the correct records."""
+        from esplib import PluginSet
 
         cc_path = tmp_path / 'ccTest.esm'
         cc = Plugin.new_plugin(cc_path, masters=[
@@ -970,40 +964,113 @@ class TestCopyRecordPluginSet:
         self._make_cc_npc(cc)
         cc.save()
 
-        lo = LoadOrder.from_list([
-            'Skyrim.esm', 'Update.esm', 'Dawnguard.esm',
-            'HearthFires.esm', 'Dragonborn.esm',
-            'ccTest.esm',
-        ], data_dir=tmp_path)
-        ps = PluginSet(lo)
-        ps.load_all()
-
+        ps = PluginSet.from_plugin(cc_path)
         cc_loaded = ps.get_plugin('ccTest.esm')
-        npc_rec = [r for r in cc_loaded.get_records_by_signature('NPC_')
-                   if r.editor_id == 'TestCCNPC'][0]
+        npc_rec = cc_loaded.get_record_by_editor_id('TestCCNPC')
 
         patch_path = tmp_path / 'Patch.esp'
         patch = Plugin.new_plugin(patch_path)
         patch.plugin_set = ps
-        patch.copy_record(npc_rec, plugin_set=ps)
+        patch.copy_record(npc_rec)
         patch.save()
 
-        # Reload and verify
-        reloaded = Plugin(patch_path)
-        npc_reloaded = [r for r in reloaded.records
-                        if r.editor_id == 'TestCCNPC'][0]
+        # Reload via PluginSet so FormIDs can be resolved
+        ps2 = PluginSet.from_plugin(patch_path)
+        patch_loaded = ps2.get_plugin('Patch.esp')
+        npc_reloaded = patch_loaded.get_record_by_editor_id('TestCCNPC')
 
-        # All FormIDs must resolve to valid master indices
+        # Simple FormID fields resolve to correct records
+        template_rec = ps2.resolve_reference(npc_reloaded, 'TPLT')
+        assert template_rec is not None
+        assert template_rec.editor_id == 'TestCCTemplate'
+
+        outfit_rec = ps2.resolve_reference(npc_reloaded, 'DOFT')
+        assert outfit_rec is not None
+        assert outfit_rec.editor_id == 'TestCCOutfit'
+
+        # Struct field: SNAM (faction + rank)
+        # Schema access returns AbsoluteFormID (already normalized)
+        snam_data = npc_reloaded['SNAM']
+        faction_fid = snam_data['faction']
+        assert isinstance(faction_fid, AbsoluteFormID)
+        faction_rec = ps2.resolve_form_id(faction_fid)
+        assert faction_rec is not None
+        assert faction_rec.editor_id == 'TestCCFaction'
+
+        # Repeating struct: CNTO items
+        cntos = npc_reloaded.get_subrecords('CNTO')
+        assert len(cntos) == 2
+
+        item0_fid = cntos[0].get_form_id()
+        item0_rec = ps2.resolve_form_id(item0_fid, npc_reloaded.plugin)
+        assert item0_rec is not None
+        assert item0_rec.editor_id == 'TestCCItem'
+
+        # Second item references Skyrim.esm (not loaded) — verify FormID only
+        item1_fid = cntos[1].get_form_id()
+        assert item1_fid.object_index == 0x037C2B
+
+
+# ===================================================================
+# Sentinel FormID (0xFF) stability
+# ===================================================================
+
+
+class TestSentinelFormIDSurvivesMasterAddition:
+    """Local FormIDs use a 0xFF sentinel that gets resolved at save time.
+    Adding masters after write_form_id must not corrupt these references."""
+
+
+    def test_local_formid_survives_new_master(self, tmp_path):
+        """A local race referenced by an NPC survives save/reload even
+        after copy_record adds new masters to the patch."""
+
+        # Two source plugins
+        src_a = Plugin.new_plugin(tmp_path / 'SourceA.esp',
+                                  masters=['Skyrim.esm'])
+        src_a.new_record('RACE', 'RaceFromA')
+        src_a.save()
+
+        src_b = Plugin.new_plugin(tmp_path / 'SourceB.esp',
+                                  masters=['Skyrim.esm'])
+        src_b.new_record('FLST', 'ListFromB')
+        src_b.save()
+
+        # Create patch with only Skyrim.esm as master initially
+        patch = Plugin.new_plugin(tmp_path / 'Patch.esp',
+                                  masters=['Skyrim.esm'])
+
+        # Create a local race and reference it from an NPC
+        npc_race = patch.new_record('RACE', 'NPCRace')
+        npc = patch.new_record('NPC_', 'TestNPC', form_id=0x13746)
+        npc.add_subrecord('RNAM', npc_race.form_id)
+
+        masters_before = len(patch.header.masters)
+
+        # Copy a record from SourceB — adds SourceB.esp as a new master,
+        # shifting what the self-index will be at save time
+        loaded_b = Plugin.load(tmp_path / 'SourceB.esp')
+        flst_rec = next(loaded_b.get_records_by_signature('FLST'))
+        patch.copy_record(flst_rec)
+
+        assert len(patch.header.masters) > masters_before, \
+            "copy_record should have added a new master"
+
+        # Save and reload
+        patch.save()
+        reloaded = Plugin(tmp_path / 'Patch.esp')
+
+        npc_reloaded = next(reloaded.get_records_by_signature('NPC_'))
+        race_reloaded = next(reloaded.get_records_by_signature('RACE'))
+        assert race_reloaded.editor_id == 'NPCRace'
+
+        # RNAM must point to self (file_index == len(masters))
+        # and match the race record's object_index
         num_masters = len(reloaded.header.masters)
-        assert npc_reloaded.form_id.file_index < num_masters
-
-        for sr in npc_reloaded.subrecords:
-            if sr.signature in ('SNAM', 'TPLT', 'CNTO', 'DOFT'):
-                fid = struct.unpack_from('<I', sr.data, 0)[0]
-                fi = fid >> 24
-                assert fi < num_masters, \
-                    f"{sr.signature} FormID 0x{fid:08X} has file_index " \
-                    f"{fi} >= num_masters {num_masters}"
+        assert npc_reloaded['RNAM'].file_index == num_masters, \
+            "RNAM file_index should reference self"
+        assert npc_reloaded['RNAM'].object_index == race_reloaded.form_id.object_index, \
+            "RNAM should reference the local race record"
 
 
 # ===================================================================
@@ -1015,27 +1082,28 @@ class TestStructNPCTintAutoSort:
     """Tint layers stay interleaved after auto-sort on modified records."""
 
 
-    def test_tints_interleaved_after_sort(self):
+    def test_tints_interleaved_after_sort(self, tmp_path):
         """Modified NPC record preserves TINI/TINC/TINV/TIAS grouping."""
-        from esplib.defs.game import GameRegistry
+        from esplib.defs.tes5 import ACBS
 
-        npc = Record('NPC_', FormID(0x100), 0)
-        npc.add_subrecord('EDID', b'TestNPC\x00')
-        npc.add_subrecord('ACBS', b'\x00' * 24)
+        patch = Plugin.new_plugin(tmp_path / 'Patch.esp',
+                                  masters=['Skyrim.esm'])
 
-        npc.add_subrecord('TINI', struct.pack('<H', 643))
-        npc.add_subrecord('TINC', bytes([108, 99, 85, 0]))
-        npc.add_subrecord('TINV', struct.pack('<i', 89))
-        npc.add_subrecord('TIAS', struct.pack('<h', 9336))
+        npc = patch.new_record('NPC_', 'TestNPC')
+        npc['ACBS'] = {'flags': ACBS.Female | ACBS.Essential}
 
-        npc.add_subrecord('TINI', struct.pack('<H', 644))
-        npc.add_subrecord('TINC', bytes([25, 25, 25, 0]))
-        npc.add_subrecord('TINV', struct.pack('<i', 100))
-        npc.add_subrecord('TIAS', struct.pack('<h', 9347))
-
-        reg = GameRegistry.get_game('tes5')
-        npc.schema = reg.get('NPC_')
-        npc.modified = True
+        npc.add_tint_layer(
+            tini=643,
+            tinc=[108, 99, 85, 0],
+            tinv=89,
+            tias=9336,
+        )
+        npc.add_tint_layer(
+            tini=644,
+            tinc=[25, 25, 25, 0],
+            tinv=100,
+            tias=9347,
+        )
 
         flat = npc._flatten_children()
         tint_sigs = [sr.signature for sr in flat
@@ -1046,40 +1114,30 @@ class TestStructNPCTintAutoSort:
             f"Tints should be interleaved, got {tint_sigs}"
 
 
-    def test_tints_after_add_and_remove(self):
+    def test_tints_after_add_and_remove(self, tmp_path):
         """Adding/removing tint layers preserves interleaved order."""
-        from esplib.defs.game import GameRegistry
+        from esplib.defs.tes5 import ACBS
 
-        npc = Record('NPC_', FormID(0x100), 0)
-        npc.add_subrecord('EDID', b'TestNPC\x00')
-        npc.add_subrecord('ACBS', b'\x00' * 24)
-        npc.add_subrecord('FULL', b'Test\x00')
+        patch = Plugin.new_plugin(tmp_path / 'Patch.esp',
+                                  masters=['Skyrim.esm'])
 
-        npc.add_subrecord('TINI', struct.pack('<H', 1))
-        npc.add_subrecord('TINC', bytes([255, 0, 0, 0]))
-        npc.add_subrecord('TINV', struct.pack('<i', 50))
-        npc.add_subrecord('TIAS', struct.pack('<h', 100))
+        npc = patch.new_record('NPC_', 'TestNPC')
+        npc['ACBS'] = {'flags': ACBS.Female}
+        npc.add_subrecord('FULL', 'Test')
 
-        reg = GameRegistry.get_game('tes5')
-        npc.schema = reg.get('NPC_')
+        npc.add_tint_layer(tini=1, tinc=[255, 0, 0, 0], tinv=50, tias=100)
 
+        # Remove all tints and reset hierarchy
         npc.remove_subrecords('TINI')
         npc.remove_subrecords('TINC')
         npc.remove_subrecords('TINV')
         npc.remove_subrecords('TIAS')
         npc.children = None
 
-        npc.add_subrecord('TINI', struct.pack('<H', 10))
-        npc.add_subrecord('TINC', bytes([0, 255, 0, 0]))
-        npc.add_subrecord('TINV', struct.pack('<i', 75))
-        npc.add_subrecord('TIAS', struct.pack('<h', 200))
+        # Re-add two layers
+        npc.add_tint_layer(tini=10, tinc=[0, 255, 0, 0], tinv=75, tias=200)
+        npc.add_tint_layer(tini=20, tinc=[0, 0, 255, 0], tinv=90, tias=300)
 
-        npc.add_subrecord('TINI', struct.pack('<H', 20))
-        npc.add_subrecord('TINC', bytes([0, 0, 255, 0]))
-        npc.add_subrecord('TINV', struct.pack('<i', 90))
-        npc.add_subrecord('TIAS', struct.pack('<h', 300))
-
-        npc.modified = True
         flat = npc._flatten_children()
         tint_sigs = [sr.signature for sr in flat
                      if sr.signature in ('TINI', 'TINC', 'TINV', 'TIAS')]

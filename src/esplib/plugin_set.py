@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Union
 from .plugin import Plugin
 from .record import Record
-from .utils import FormID
+from .utils import FormID, BaseFormID, AbsoluteFormID
 from .load_order import LoadOrder
 from .exceptions import PluginError
 
@@ -61,6 +61,45 @@ class PluginSet:
         # FormID -> list of (plugin_name, record) in load order
         self._override_index: Optional[Dict[int, OverrideChain]] = None
 
+
+    @classmethod
+    def from_plugin(cls, plugin_path: Union[str, Path],
+                    data_dir: Union[str, Path, None] = None,
+                    game_id: str = 'tes5') -> 'PluginSet':
+        """Load a plugin and all its masters into a PluginSet.
+
+        Reads the plugin's master list from its header, recursively
+        gathers transitive masters, builds a load order, and loads
+        everything.
+        """
+        plugin_path = Path(plugin_path)
+        if data_dir is None:
+            data_dir = plugin_path.parent
+        else:
+            data_dir = Path(data_dir)
+
+        # Gather all masters recursively
+        def _gather_masters(name: str, seen: set, order: list):
+            if name.lower() in seen:
+                return
+            seen.add(name.lower())
+            path = data_dir / name
+            if not path.exists():
+                return
+            p = Plugin(path)
+            for master in p.header.masters:
+                _gather_masters(master, seen, order)
+            order.append(name)
+
+        order: list = []
+        seen: set = set()
+        _gather_masters(plugin_path.name, seen, order)
+
+        lo = LoadOrder.from_list(order, data_dir=data_dir, game_id=game_id)
+        ps = cls(lo)
+        ps.load_all()
+        return ps
+
     def _resolve_plugin_path(self, name: str) -> Optional[Path]:
         """Find the file path for a plugin name."""
         return self.load_order.plugin_path(name)
@@ -83,7 +122,7 @@ class PluginSet:
         try:
             plugin = Plugin()
             plugin.string_search_dirs = list(self.string_search_dirs)
-            plugin.load(path)
+            plugin._load(path)
             plugin.plugin_set = self
             self._plugins[name] = plugin
             self._loaded_full[name] = True
@@ -125,14 +164,14 @@ class PluginSet:
                 if abs_fid is None:
                     continue
 
-                fid_val = abs_fid if isinstance(abs_fid, int) else abs_fid.value
+                fid_val = abs_fid.value
 
                 if fid_val not in self._override_index:
                     self._override_index[fid_val] = OverrideChain()
                 self._override_index[fid_val].add(plugin_name, record)
 
     def _resolve_absolute_form_id(self, form_id: FormID,
-                                   plugin: Plugin) -> Optional[int]:
+                                   plugin: Plugin) -> Optional[AbsoluteFormID]:
         """Resolve a plugin-local FormID to an absolute FormID.
 
         The file_index byte of a FormID indexes into the plugin's master
@@ -149,7 +188,7 @@ class PluginSet:
             lo_idx = self.load_order.index_of(master_name)
             if lo_idx < 0:
                 return None
-            return (lo_idx << 24) | form_id.object_index
+            return AbsoluteFormID((lo_idx << 24) | form_id.object_index)
         elif file_idx == num_masters:
             # This plugin's own record
             plugin_name = None
@@ -158,12 +197,12 @@ class PluginSet:
             lo_idx = self.load_order.index_of(plugin_name) if plugin_name else -1
             if lo_idx < 0:
                 return None
-            return (lo_idx << 24) | form_id.object_index
+            return AbsoluteFormID((lo_idx << 24) | form_id.object_index)
         else:
             # Invalid file index
             return None
 
-    def get_override_chain(self, form_id: Union[FormID, int]) -> Optional[OverrideChain]:
+    def get_override_chain(self, form_id: Union[BaseFormID, int]) -> Optional[OverrideChain]:
         """Get the override chain for a FormID.
 
         Returns an OverrideChain where [0] is the base and [-1] is the winner.
@@ -172,7 +211,7 @@ class PluginSet:
         if self._override_index is None:
             self._build_override_index()
 
-        fid_val = form_id.value if isinstance(form_id, FormID) else form_id
+        fid_val = form_id.value if isinstance(form_id, BaseFormID) else form_id
         return self._override_index.get(fid_val)
 
     def overridden_records(self):
@@ -187,16 +226,25 @@ class PluginSet:
             if len(chain) > 1:
                 yield fid, chain
 
-    def resolve_form_id(self, form_id: FormID, source_plugin: Plugin) -> Optional[Record]:
-        """Resolve a FormID reference from a source plugin to the winning record.
+    def resolve_form_id(self, form_id: BaseFormID,
+                        source_plugin: Plugin = None) -> Optional[Record]:
+        """Resolve a FormID reference to the winning record.
 
-        Follows the master chain to find the actual record being referenced.
+        AbsoluteFormID: looked up directly (source_plugin not needed).
+        LocalFormID: requires source_plugin to normalize first.
         """
-        abs_fid = self._resolve_absolute_form_id(form_id, source_plugin)
-        if abs_fid is None:
-            return None
+        if isinstance(form_id, AbsoluteFormID):
+            abs_val = form_id.value
+        else:
+            if source_plugin is None:
+                raise TypeError(
+                    "source_plugin is required when resolving a LocalFormID")
+            abs_fid = self._resolve_absolute_form_id(form_id, source_plugin)
+            if abs_fid is None:
+                return None
+            abs_val = abs_fid.value
 
-        chain = self.get_override_chain(abs_fid)
+        chain = self.get_override_chain(abs_val)
         if chain and len(chain) > 0:
             return chain[-1]  # Winner
         return None

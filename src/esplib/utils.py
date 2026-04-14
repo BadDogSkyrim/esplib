@@ -6,8 +6,14 @@ from typing import Union, List, Optional
 from .exceptions import FormIDError, ParseError
 
 
-class FormID:
-    """Represents a Bethesda FormID."""
+class BaseFormID:
+    """Common base for all FormID types.
+
+    Use for isinstance checks when either LocalFormID or AbsoluteFormID
+    is acceptable.
+    """
+
+    __slots__ = ('_value',)
 
     def __init__(self, value: int):
         if not isinstance(value, int):
@@ -21,15 +27,51 @@ class FormID:
         return self._value
 
     @property
-    def file_index(self) -> int:
-        return (self._value >> 24) & 0xFF
-
-    @property
     def object_index(self) -> int:
         return self._value & 0x00FFFFFF
 
+    def __str__(self) -> str:
+        fi = (self._value >> 24) & 0xFF
+        if fi == 0xFE:
+            esl_index = (self._value >> 12) & 0xFFF
+            object_index = self._value & 0xFFF
+            return f"[FE:{esl_index:03X}] {object_index:06X}"
+        else:
+            return f"[{fi:02X}] {self.object_index:06X}"
+
+    def __repr__(self) -> str:
+        return f"{type(self).__name__}(0x{self._value:08X})"
+
+    def __eq__(self, other) -> bool:
+        if type(self) is type(other):
+            return self._value == other._value
+        if isinstance(other, BaseFormID):
+            return False  # cross-type: never equal
+        if isinstance(other, int):
+            return self._value == other
+        return False
+
+    def __hash__(self) -> int:
+        return hash(self._value)
+
+    def __int__(self) -> int:
+        return self._value
+
+
+class LocalFormID(BaseFormID):
+    """FormID as stored on disk — file_index indexes into a plugin's master list.
+
+    Meaningless without knowing which plugin it belongs to.
+    """
+
+    __slots__ = ()
+
+    @property
+    def file_index(self) -> int:
+        return (self._value >> 24) & 0xFF
+
     @classmethod
-    def from_string(cls, s: str) -> 'FormID':
+    def from_string(cls, s: str) -> 'LocalFormID':
         s = s.strip()
         if s.startswith('[') and '] ' in s:
             bracket_part, object_part = s.split('] ', 1)
@@ -55,10 +97,10 @@ class FormID:
             value = int(s, 16)
         return cls(value)
 
-    def to_load_order_form_id(self, load_order_index: int) -> 'FormID':
+    def to_load_order_form_id(self, load_order_index: int) -> 'AbsoluteFormID':
         if load_order_index < 0 or load_order_index > 0xFF:
             raise FormIDError(f"Load order index out of range: {load_order_index}")
-        return FormID((load_order_index << 24) | self.object_index)
+        return AbsoluteFormID((load_order_index << 24) | self.object_index)
 
     def is_esl_form_id(self) -> bool:
         return self.file_index == 0xFE
@@ -68,29 +110,24 @@ class FormID:
             return (self._value >> 12) & 0xFFF
         return None
 
-    def __str__(self) -> str:
-        if self.is_esl_form_id():
-            esl_index = self.get_esl_index()
-            object_index = self._value & 0xFFF
-            return f"[FE:{esl_index:03X}] {object_index:06X}"
-        else:
-            return f"[{self.file_index:02X}] {self.object_index:06X}"
 
-    def __repr__(self) -> str:
-        return f"FormID(0x{self._value:08X})"
+# Backward compatibility alias
+FormID = LocalFormID
 
-    def __eq__(self, other) -> bool:
-        if isinstance(other, FormID):
-            return self._value == other._value
-        elif isinstance(other, int):
-            return self._value == other
-        return False
 
-    def __hash__(self) -> int:
-        return hash(self._value)
+class AbsoluteFormID(BaseFormID):
+    """FormID resolved to load-order space — load_index is the plugin's
+    position in the load order.
 
-    def __int__(self) -> int:
-        return self._value
+    Self-contained.  Can be used directly as a key in PluginSet's override
+    index without needing to know the source plugin.
+    """
+
+    __slots__ = ()
+
+    @property
+    def load_index(self) -> int:
+        return (self._value >> 24) & 0xFF
 
 
 class BinaryReader:
@@ -145,7 +182,7 @@ class BinaryReader:
         data = self.read_bytes(length)
         return data.decode(encoding, errors='replace')
 
-    def read_form_id(self) -> FormID:
+    def read_form_id(self) -> 'FormID':
         return FormID(self.read_uint32())
 
     def seek(self, position: int) -> None:
@@ -199,8 +236,8 @@ class BinaryWriter:
         self.write_uint16(len(encoded))
         self.data.extend(encoded)
 
-    def write_form_id(self, form_id: Union[FormID, int]) -> None:
-        if isinstance(form_id, FormID):
+    def write_form_id(self, form_id: Union[BaseFormID, int]) -> None:
+        if isinstance(form_id, BaseFormID):
             self.write_uint32(form_id.value)
         else:
             self.write_uint32(form_id)

@@ -34,7 +34,7 @@ def skyrim_plugin():
     assert strings_dir, "String tables not found"
     p = Plugin()
     p.string_search_dirs = [str(strings_dir)]
-    p.load(esm_path)
+    p._load(esm_path)
     return p
 
 

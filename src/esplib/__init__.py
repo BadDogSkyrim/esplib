@@ -2,7 +2,7 @@
 
 from .plugin import Plugin, PluginHeader
 from .record import Record, SubRecord, GroupInstance, GroupRecord
-from .utils import FormID
+from .utils import FormID, LocalFormID, AbsoluteFormID, BaseFormID
 from .strings import StringTable, StringTableManager
 from .load_order import LoadOrder
 from .plugin_set import PluginSet, OverrideChain
@@ -21,7 +21,7 @@ __version__ = "0.2.0"
 __all__ = [
     "Plugin", "PluginHeader",
     "Record", "SubRecord", "GroupInstance", "GroupRecord",
-    "FormID",
+    "FormID", "LocalFormID", "AbsoluteFormID", "BaseFormID",
     "StringTable", "StringTableManager",
     "LoadOrder", "PluginSet", "OverrideChain",
     "GameInstall", "discover_games", "find_game",

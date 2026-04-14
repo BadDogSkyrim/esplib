@@ -5,7 +5,7 @@ import shutil
 from pathlib import Path
 from typing import List, Optional, Union, Dict, Iterator, Any
 from .record import Record, SubRecord, GroupRecord
-from .utils import FormID, BinaryReader, BinaryWriter
+from .utils import FormID, BaseFormID, AbsoluteFormID, BinaryReader, BinaryWriter
 from .exceptions import PluginError, ParseError, ValidationError
 
 
@@ -154,9 +154,17 @@ class Plugin:
         self._signature_index: Dict[str, List[Record]] = {}
 
         if file_path and Path(file_path).exists():
-            self.load()
+            self._load()
 
-    def load(self, file_path: Optional[Union[str, Path]] = None) -> None:
+    @classmethod
+    def load(cls, file_path: Union[str, Path]) -> 'Plugin':
+        """Load a plugin from disk and return it."""
+        plugin = cls(file_path)
+        if not plugin.records:
+            plugin._load()
+        return plugin
+
+    def _load(self, file_path: Optional[Union[str, Path]] = None) -> None:
         if file_path:
             self.file_path = Path(file_path)
 
@@ -277,18 +285,41 @@ class Plugin:
             if schema is not None:
                 record.bind_schema(schema)
 
-    def get_record_by_form_id(self, form_id: Union[FormID, int]) -> Optional[Record]:
-        if isinstance(form_id, FormID):
+    def get_record_by_form_id(self, form_id: Union[BaseFormID, int]) -> Optional[Record]:
+        if isinstance(form_id, BaseFormID):
             form_id = form_id.value
         return self._form_id_index.get(form_id)
 
     def get_record_by_editor_id(self, editor_id: str) -> Optional[Record]:
         return self._editor_id_index.get(editor_id.lower())
 
-    def get_records_by_signature(self, signature: str) -> List[Record]:
-        return self._signature_index.get(signature, []).copy()
+    def get_records_by_signature(self, signature: str):
+        """Iterate over records matching the given signature."""
+        return iter(self._signature_index.get(signature, []))
+
+    def new_record(self, signature: str, edid: str = None,
+                   form_id: int = None, flags: int = 0) -> Record:
+        """Create a new record owned by this plugin.
+
+        form_id is the object_index only — the plugin's file index is
+        prepended automatically. If omitted, a fresh local FormID is
+        assigned via get_next_form_id().
+        """
+        if form_id is not None:
+            self_index = len(self.header.masters)
+            fid = FormID((self_index << 24) | form_id)
+        else:
+            fid = FormID(0)  # add_record will assign via get_next_form_id()
+
+        record = Record(signature, fid, flags)
+        if edid is not None:
+            record.add_subrecord('EDID', edid)
+        self.add_record(record)
+        return record
+
 
     def add_record(self, record: Record, group_signature: Optional[str] = None) -> None:
+        record.plugin = self
         if record.form_id.value == 0:
             record.form_id = self.get_next_form_id()
         if record.form_id.file_index == self._LOCAL_SENTINEL:
@@ -403,27 +434,32 @@ class Plugin:
         plugin.set_game(game)
         return plugin
 
-    def normalize_form_id(self, form_id: Union[FormID, int]) -> FormID:
+    def normalize_form_id(self, form_id: Union[FormID, int]) -> AbsoluteFormID:
         """Convert a FormID from this plugin's master-list indexing to
         load-order indexing.
 
-        If no PluginSet is available, returns the FormID unchanged
-        (the master list acts as the load order).
+        If no PluginSet is available, wraps the value as AbsoluteFormID
+        unchanged (the master list acts as the load order).
         """
         if isinstance(form_id, int):
             form_id = FormID(form_id)
         if self.plugin_set is None:
-            return form_id
+            return AbsoluteFormID(form_id.value)
 
         file_idx = form_id.file_index
         masters = self.header.masters
+
+        if file_idx == self._LOCAL_SENTINEL:
+            # Local record with sentinel file index — preserve as-is.
+            # The sentinel will be resolved at save time.
+            return AbsoluteFormID(form_id.value)
 
         if file_idx < len(masters):
             master_name = masters[file_idx]
         elif self.file_path:
             master_name = self.file_path.name
         else:
-            return form_id
+            return AbsoluteFormID(form_id.value)
 
         lo_idx = self.plugin_set.load_order.index_of(master_name)
         if lo_idx < 0:
@@ -433,25 +469,27 @@ class Plugin:
                 "load order — FormID 0x%08X will not be remapped correctly",
                 self.file_path.name if self.file_path else '(unknown)',
                 master_name, form_id.value)
-            return form_id
+            return AbsoluteFormID(form_id.value)
 
-        return FormID((lo_idx << 24) | form_id.object_index)
+        return AbsoluteFormID((lo_idx << 24) | form_id.object_index)
 
 
-    def denormalize_form_id(self, form_id: Union[FormID, int]) -> int:
+    def denormalize_form_id(self, form_id: Union[BaseFormID, int]) -> int:
         """Convert a load-order-indexed FormID to this plugin's master-list
         indexing for writing into subrecord data.
 
-        For FormIDs referencing master plugins, finds (or lazily adds) the
-        master and returns the master-list-indexed value.
+        Accepts AbsoluteFormID (preferred), LocalFormID, or raw int.
+        The high byte is treated as a load-order index regardless of type.
 
         For local FormIDs (sentinel 0xFF), returns the sentinel value
         unchanged — the caller should register it on the fixup list.
         """
         if isinstance(form_id, int):
-            form_id = FormID(form_id)
+            form_id = AbsoluteFormID(form_id)
 
-        if form_id.file_index == self._LOCAL_SENTINEL:
+        hi_byte = (form_id.value >> 24) & 0xFF
+
+        if hi_byte == self._LOCAL_SENTINEL:
             # Local record — return sentinel, caller adds to fixup list
             return form_id.value
 
@@ -462,10 +500,10 @@ class Plugin:
         # Look up which plugin this load-order index refers to
         lo = self.plugin_set.load_order
         plugins_list = list(lo)
-        if form_id.file_index >= len(plugins_list):
+        if hi_byte >= len(plugins_list):
             return form_id.value  # out of range, return as-is
 
-        master_name = plugins_list[form_id.file_index]
+        master_name = plugins_list[hi_byte]
 
         # Find or add this master in our master list
         for i, m in enumerate(self.header.masters):
@@ -479,9 +517,11 @@ class Plugin:
 
 
     def write_form_id(self, sr: 'SubRecord', offset: int,
-                      form_id: Union[FormID, int]) -> None:
-        """Write a load-order-indexed FormID into subrecord data,
-        converting to master-list indexing.
+                      form_id: Union[BaseFormID, int]) -> None:
+        """Write a FormID into subrecord data, converting to master-list
+        indexing via denormalize_form_id.
+
+        Accepts AbsoluteFormID (preferred), LocalFormID, or raw int.
 
         For local FormIDs (sentinel 0xFF), writes the sentinel and
         registers the location on the fixup list for save-time
@@ -489,7 +529,7 @@ class Plugin:
         """
         import struct as _struct
         if isinstance(form_id, int):
-            form_id = FormID(form_id)
+            form_id = AbsoluteFormID(form_id)
 
         raw = self.denormalize_form_id(form_id)
 
@@ -502,7 +542,8 @@ class Plugin:
         sr.data = new_data
         sr.modified = True
 
-        if form_id.file_index == self._LOCAL_SENTINEL:
+        hi_byte = (form_id.value >> 24) & 0xFF
+        if hi_byte == self._LOCAL_SENTINEL:
             self._local_formid_fixups.append((sr, offset))
 
 
@@ -566,8 +607,7 @@ class Plugin:
     })
 
     def copy_record(self, record: 'Record',
-                    source_plugin: Optional['Plugin'] = None,
-                    plugin_set=None) -> 'Record':
+                    source_plugin: Optional['Plugin'] = None) -> 'Record':
         """Deep-copy a record into this plugin.
 
         Remaps all FormIDs from the source plugin's master-list indexing
@@ -580,7 +620,7 @@ class Plugin:
         Returns the new record.
         """
         source = source_plugin or record.plugin
-        ps = plugin_set or (source.plugin_set if source else None)
+        ps = source.plugin_set if source else None
         new_record = record.copy()
 
         if source is not None:

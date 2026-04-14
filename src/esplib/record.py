@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import struct
 from typing import List, Optional, Union, TYPE_CHECKING
-from .utils import FormID, BinaryReader, BinaryWriter, decompress_zlib, compress_zlib
+from .utils import FormID, BaseFormID, BinaryReader, BinaryWriter, decompress_zlib, compress_zlib
 from .exceptions import ParseError, ValidationError
 
 if TYPE_CHECKING:
@@ -131,16 +131,16 @@ class SubRecord:
         self._data = bytearray(struct.pack('<H', len(encoded)) + encoded)
         self.modified = True
 
-    def set_form_id(self, offset: int, form_id: Union[FormID, int]) -> None:
-        if isinstance(form_id, FormID):
+    def set_form_id(self, offset: int, form_id: Union[BaseFormID, int]) -> None:
+        if isinstance(form_id, BaseFormID):
             self.set_uint32(offset, form_id.value)
         else:
             self.set_uint32(offset, form_id)
 
-    def set_form_id_array(self, form_ids: List[Union[FormID, int]]) -> None:
+    def set_form_id_array(self, form_ids: List[Union[BaseFormID, int]]) -> None:
         self._data = bytearray()
         for form_id in form_ids:
-            if isinstance(form_id, FormID):
+            if isinstance(form_id, BaseFormID):
                 self._data.extend(struct.pack('<I', form_id.value))
             else:
                 self._data.extend(struct.pack('<I', form_id))
@@ -274,21 +274,23 @@ class Record:
         # Back-reference to owning Plugin (set by Plugin._link_records)
         self.plugin = None
 
-    def normalize_form_id(self, form_id) -> 'FormID':
+    def normalize_form_id(self, form_id) -> 'AbsoluteFormID':
         """Convert a FormID from this record's plugin indexing to
         load-order indexing. Delegates to the owning plugin."""
         if self.plugin is not None:
             return self.plugin.normalize_form_id(form_id)
-        from .utils import FormID as _FormID
-        return _FormID(form_id) if isinstance(form_id, int) else form_id
+        from .utils import AbsoluteFormID as _AbsoluteFormID
+        if isinstance(form_id, int):
+            return _AbsoluteFormID(form_id)
+        return _AbsoluteFormID(form_id.value)
 
 
     def _normalize_value(self, value):
         """Normalize FormIDs in a parsed schema value to load-order indexing."""
         if self.plugin is None or self.plugin.plugin_set is None:
             return value
-        from .utils import FormID as _FormID
-        if isinstance(value, _FormID):
+        from .utils import BaseFormID as _BaseFormID
+        if isinstance(value, _BaseFormID):
             return self.normalize_form_id(value)
         if isinstance(value, dict):
             return {k: self._normalize_value(v) for k, v in value.items()}
@@ -476,12 +478,33 @@ class Record:
         return [sr for sr in self.subrecords if sr.signature == signature]
 
     def add_subrecord(self, signature: str, data=b'') -> SubRecord:
+        formid_sentinel = (isinstance(data, FormID) and data.file_index == 0xFF)
         if isinstance(data, str):
             data = data.encode('cp1252') + b'\x00'
+        elif isinstance(data, BaseFormID):
+            import struct as _struct
+            data = _struct.pack('<I', data.value)
         subrecord = SubRecord(signature, data)
         self.subrecords.append(subrecord)
         self.modified = True
+        if formid_sentinel and self.plugin is not None:
+            self.plugin._local_formid_fixups.append((subrecord, 0))
         return subrecord
+
+    def add_tint_layer(self, tini: int, tinc: list, tinv: int, tias: int) -> None:
+        """Add a tint layer (TINI + TINC + TINV + TIAS subrecords).
+
+        tini: tint index (U16)
+        tinc: color as [R, G, B, A] (4 x U8)
+        tinv: interpolation value (S32)
+        tias: preset index (S16)
+        """
+        import struct as _struct
+        self.add_subrecord('TINI', _struct.pack('<H', tini))
+        self.add_subrecord('TINC', bytes(tinc))
+        self.add_subrecord('TINV', _struct.pack('<i', tinv))
+        self.add_subrecord('TIAS', _struct.pack('<h', tias))
+
 
     def insert_subrecord(self, index: int, signature: str, data: bytes = b'') -> SubRecord:
         subrecord = SubRecord(signature, data)
