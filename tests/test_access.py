@@ -284,7 +284,7 @@ class TestSkyrimAccess:
         assert acbs['level'] == 9
         assert acbs['flags'].Female, "Bryling should be female"
         assert 'Female' in acbs['flags']
-        assert not acbs['flags'].Is_CharGen_Face_Preset
+        assert not acbs['flags'].IsCharGenFacePreset
 
 
     @pytest.mark.gamefiles

@@ -7,7 +7,62 @@ saving/reloading, and verifying field values against real game data.
 import pytest
 
 from esplib import Plugin, Record, FormID
-from esplib.defs import tes5
+from esplib.defs import FlagSet, tes5
+
+
+class TestRecordHeaderFlags:
+    """Record.flags is a FlagSet with per-signature schema."""
+
+
+    def test_default_signature_has_common_flags_only(self):
+        rec = Record('WEAP', 0, 0)
+        assert isinstance(rec.flags, FlagSet)
+        # Common bits are always available
+        assert rec.flags.Compressed is False
+        assert rec.flags.Deleted is False
+        # Signature-specific bits are NOT defined for WEAP
+        with pytest.raises(AttributeError):
+            _ = rec.flags.Master
+
+
+    def test_tes4_header_has_master_light_localized(self):
+        rec = Record('TES4', 0, 0)
+        rec.flags.Master = True
+        rec.flags.Light = True
+        rec.flags.Localized = True
+        assert int(rec.flags) == 0x00000001 | 0x00000200 | 0x00000080
+
+
+    def test_refr_header_has_persistent_initially_disabled(self):
+        rec = Record('REFR', 0, 0)
+        rec.flags.Persistent = True
+        rec.flags.InitiallyDisabled = True
+        assert int(rec.flags) == (1 << 10) | (1 << 11)
+
+
+    def test_compressed_bit_mutation(self):
+        rec = Record('WEAP', 0, 0)
+        assert not rec.is_compressed
+        rec.flags.Compressed = True
+        assert rec.is_compressed
+        assert int(rec.flags) == 0x00040000
+
+
+    def test_flags_preserves_unknown_bits(self):
+        """Construction from an int with unknown bits keeps them intact."""
+        raw = 0x00040001 | 0x80000000  # Compressed + Master + unknown bit 31
+        rec = Record('TES4', 0, raw)
+        assert int(rec.flags) == raw
+        # Mutate a known bit — unknown survives
+        rec.flags.Compressed = False
+        assert int(rec.flags) == (raw & ~0x00040000)
+
+
+    def test_flags_accepts_flagset_at_construction(self):
+        a = Record('TES4', 0, 0x00000001)
+        b = Record('TES4', 0, a.flags)
+        assert int(b.flags) == 0x00000001
+        assert b.flags.Master is True
 
 
 # ---------------------------------------------------------------------------

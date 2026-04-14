@@ -2,7 +2,7 @@
 
 from .types import (
     IntType,
-    EspFlags, EspEnum,
+    EspFlags, EspEnum, FlagSet, FlagConst,
     EspInteger, EspFloat, EspString, EspFormID, EspByteArray,
     EspStruct, EspArray, EspUnion,
     EspSubRecord, EspGroup, EspRecord,
@@ -13,7 +13,7 @@ from . import tes5 as _tes5  # noqa: F401 -- triggers auto-registration
 
 __all__ = [
     'IntType',
-    'EspFlags', 'EspEnum',
+    'EspFlags', 'EspEnum', 'FlagSet', 'FlagConst',
     'EspInteger', 'EspFloat', 'EspString', 'EspFormID', 'EspByteArray',
     'EspStruct', 'EspArray', 'EspUnion',
     'EspSubRecord', 'EspGroup', 'EspRecord',

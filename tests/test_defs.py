@@ -54,6 +54,61 @@ class TestEspFlags:
         assert flags2.names == flags.names
 
 
+    def test_attribute_name_strips_spaces_and_punctuation(self):
+        flags = EspFlags.new({
+            0: 'Auto-calc Stats',
+            1: "Doesn't Bleed",
+            2: 'Is CharGen Face Preset',
+        })
+        result = flags.decode(0b111)
+        assert result.AutocalcStats is True
+        assert result.DoesntBleed is True
+        assert result.IsCharGenFacePreset is True
+        # Original names still work through item access
+        assert result['Auto-calc Stats'] is True
+
+
+    def test_mutation_via_attribute(self):
+        flags = EspFlags.new({0: 'A', 4: 'Special'})
+        result = flags.decode(0)
+        assert result.A is False
+        result.A = True
+        assert result.A is True
+        assert int(result) == 0b1
+        result.Special = True
+        assert int(result) == 0b10001
+        result.A = False
+        assert int(result) == 0b10000
+
+
+    def test_mutation_via_item(self):
+        flags = EspFlags.new({0: 'Playable', 4: 'Non-Equippable'})
+        result = flags.decode(0)
+        result['Playable'] = True
+        assert int(result) == 0b1
+        result['Non-Equippable'] = True
+        assert int(result) == 0b10001
+
+
+    def test_mutation_unknown_flag_raises(self):
+        flags = EspFlags.new({0: 'A'})
+        result = flags.decode(0)
+        with pytest.raises(AttributeError):
+            result.Bogus = True
+        with pytest.raises(KeyError):
+            result['Bogus'] = True
+
+
+    def test_preserves_unknown_bits(self):
+        """Bits not in the schema should still survive int round-trip."""
+        flags = EspFlags.new({0: 'Known'})
+        result = flags.decode(0b10001)  # bit 0 (Known) + bit 4 (unknown)
+        assert int(result) == 0b10001
+        # Mutating a known bit keeps unknown bits intact
+        result.Known = False
+        assert int(result) == 0b10000
+
+
 # ---------------------------------------------------------------------------
 # EspEnum
 # ---------------------------------------------------------------------------

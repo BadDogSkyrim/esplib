@@ -6,12 +6,60 @@ import struct
 from typing import List, Optional, Union, TYPE_CHECKING
 from .utils import FormID, BaseFormID, BinaryReader, BinaryWriter, decompress_zlib, compress_zlib
 from .exceptions import ParseError, ValidationError
+from .defs.types import EspFlags, FlagSet
 
 if TYPE_CHECKING:
     from .defs.types import EspGroup
 
-# Record flag for compressed data
-COMPRESSED_FLAG = 0x00040000
+
+# Record header flags. The 32-bit flags field in the 24-byte record header
+# carries a mix of universal bits (Deleted, Ignored, Compressed) and
+# signature-specific bits (Master/Light/Localized on TES4;
+# Persistent/InitiallyDisabled on CELL/REFR/ACHR/etc.). Bits not listed
+# here are preserved as raw bits in the FlagSet's underlying int.
+_COMMON_HEADER_FLAGS = {
+    5:  'Deleted',
+    12: 'Ignored',
+    18: 'Compressed',
+}
+
+TES4HeaderFlags = EspFlags.new({
+    0:  'Master',
+    7:  'Localized',
+    9:  'Light',
+    **_COMMON_HEADER_FLAGS,
+})
+
+RefHeaderFlags = EspFlags.new({
+    10: 'Persistent',
+    11: 'InitiallyDisabled',
+    **_COMMON_HEADER_FLAGS,
+})
+
+DefaultHeaderFlags = EspFlags.new(_COMMON_HEADER_FLAGS)
+
+# Raw bit mask, still exported for callers that want to OR/AND directly.
+COMPRESSED_FLAG = 1 << 18
+
+_HEADER_FLAGS_BY_SIG = {
+    'TES4': TES4HeaderFlags,
+    'REFR': RefHeaderFlags, 'ACHR': RefHeaderFlags,
+    'PGRE': RefHeaderFlags, 'PMIS': RefHeaderFlags,
+    'PARW': RefHeaderFlags, 'PBAR': RefHeaderFlags,
+    'PBEA': RefHeaderFlags, 'PCON': RefHeaderFlags,
+    'PFLA': RefHeaderFlags, 'PHZD': RefHeaderFlags,
+}
+
+
+def _header_flags_for(signature: str) -> EspFlags:
+    return _HEADER_FLAGS_BY_SIG.get(signature, DefaultHeaderFlags)
+
+
+def _make_flags(signature: str, value) -> FlagSet:
+    """Coerce an int or FlagSet into a FlagSet using the right schema."""
+    if isinstance(value, FlagSet):
+        return value
+    return _header_flags_for(signature).decode(int(value))
 
 
 class SubRecord:
@@ -251,13 +299,14 @@ class Record:
     each level.
     """
 
-    def __init__(self, signature: str, form_id: Union[FormID, int] = 0, flags: int = 0):
+    def __init__(self, signature: str, form_id: Union[FormID, int] = 0,
+                 flags: Union[int, FlagSet] = 0):
         if len(signature) != 4:
             raise ValidationError(
                 f"Record signature must be 4 characters, got {len(signature)}")
         self.signature = signature
         self.form_id = FormID(form_id) if isinstance(form_id, int) else form_id
-        self.flags = flags
+        self.flags: FlagSet = _make_flags(signature, flags)
         self.timestamp: int = 0
         self.version: int = 44
         self.version_control_info: int = 0
@@ -301,7 +350,7 @@ class Record:
 
     @property
     def is_compressed(self) -> bool:
-        return bool(self.flags & COMPRESSED_FLAG)
+        return self.flags.Compressed
 
     @property
     def editor_id(self) -> Optional[str]:
@@ -369,7 +418,7 @@ class Record:
                 if subrecord is not None:
                     from .defs.context import EspContext
                     ctx = EspContext(
-                        flags=self.flags,
+                        flags=int(self.flags),
                         form_version=self.version,
                         record_signature=self.signature,
                         extra={'editor_id': self.editor_id or ''},
@@ -398,7 +447,7 @@ class Record:
             if member is not None:
                 from .defs.context import EspContext as _Ctx
                 ctx = _Ctx(
-                    flags=self.flags,
+                    flags=int(self.flags),
                     form_version=self.version,
                     record_signature=self.signature,
                     extra={'editor_id': self.editor_id or ''},
@@ -459,7 +508,7 @@ class Record:
 
     def copy(self) -> 'Record':
         """Deep copy this record and all its subrecords."""
-        new = Record(self.signature, FormID(self.form_id.value), self.flags)
+        new = Record(self.signature, FormID(self.form_id.value), int(self.flags))
         new.timestamp = self.timestamp
         new.version = self.version
         new.version_control_info = self.version_control_info
@@ -674,12 +723,12 @@ class Record:
         writer = BinaryWriter()
 
         # For compressed records: use original payload if unmodified
-        if (self.flags & COMPRESSED_FLAG and
+        if (self.flags.Compressed and
                 self._original_compressed_payload is not None and
                 not self.modified and
                 not any(sr.modified for sr in self.subrecords)):
             payload = self._original_compressed_payload
-        elif self.flags & COMPRESSED_FLAG:
+        elif self.flags.Compressed:
             subrecord_bytes = self._serialize_subrecords()
             uncompressed_size = len(subrecord_bytes)
             compressed = compress_zlib(subrecord_bytes)
@@ -690,7 +739,7 @@ class Record:
         # Write record header
         writer.write_bytes(self.signature.encode('ascii'))
         writer.write_uint32(len(payload))
-        writer.write_uint32(self.flags)
+        writer.write_uint32(int(self.flags))
         writer.write_form_id(self.form_id)
         writer.write_uint32(self.timestamp)
         writer.write_uint16(self.version)
@@ -707,7 +756,7 @@ class Record:
 
     def __repr__(self) -> str:
         return (f"Record(signature='{self.signature}', form_id={self.form_id!r}, "
-                f"flags=0x{self.flags:08X}, subrecords={len(self.subrecords)})")
+                f"flags=0x{int(self.flags):08X}, subrecords={len(self.subrecords)})")
 
 
 def _restructure(subrecords: List[SubRecord], members: list) -> List[ChildEntry]:
