@@ -60,7 +60,7 @@ def demo_typed_access():
         print(f"       Armor Rating (raw) = {rating}")
 
     # Read NPC fields
-    npcs = plugin.get_records_by_signature('NPC_')
+    npcs = list(plugin.get_records_by_signature('NPC_'))
     for npc in npcs[:50]:
         if npc.get_subrecord('ACBS') and npc.editor_id:
             acbs = npc['ACBS']

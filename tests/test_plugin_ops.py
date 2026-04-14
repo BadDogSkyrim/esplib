@@ -741,7 +741,8 @@ class TestPluginSetSkyrim:
 
 
 class TestStructRemapFormID:
-    """Plugin.remap_formid() translates FormIDs between master lists."""
+    """Plugin.remap_formid() translates FormIDs between master lists. Not generally
+    needed -- use copy_record() and PluginSet for most FormID translations."""
 
 
     def test_remap_local_to_master(self):

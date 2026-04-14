@@ -76,10 +76,9 @@ def dump_records(plugin_path, record_type, signatures, out=None):
     if out is None:
         out = sys.stdout
 
-    p = Plugin()
-    p.load(plugin_path)
+    p = Plugin.load(plugin_path)
 
-    records = p.get_records_by_signature(record_type)
+    records = list(p.get_records_by_signature(record_type))
     if not records:
         print(f"No {record_type} records found in {plugin_path}", file=sys.stderr)
         return

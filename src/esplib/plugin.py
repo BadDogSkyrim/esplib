@@ -449,6 +449,11 @@ class Plugin:
         file_idx = form_id.file_index
         masters = self.header.masters
 
+        if file_idx == self._LOCAL_SENTINEL:
+            # Local record with sentinel file index — preserve as-is.
+            # The sentinel will be resolved at save time.
+            return AbsoluteFormID(form_id.value)
+
         if file_idx < len(masters):
             master_name = masters[file_idx]
         elif self.file_path:

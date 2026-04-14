@@ -113,7 +113,7 @@ def test_dawnguard_reference():
     dawnguard = ps.get_plugin('Dawnguard.esm')
     if dawnguard:
         dawnguard.set_game('tes5')
-        weapons = dawnguard.get_records_by_signature('WEAP')
+        weapons = list(dawnguard.get_records_by_signature('WEAP'))
         for w in weapons[:20]:
             edid = w.editor_id
             if edid and 'Crossbow' in edid:

@@ -182,7 +182,7 @@ class TestSkyrimRecords:
     @pytest.mark.slow
     def test_resolve_gmst(self, skyrim):
         """Resolve a GMST record."""
-        gmsts = skyrim.get_records_by_signature('GMST')
+        gmsts = list(skyrim.get_records_by_signature('GMST'))
         assert len(gmsts) > 0
 
         # Find a float GMST
@@ -199,7 +199,7 @@ class TestSkyrimRecords:
     @pytest.mark.slow
     def test_resolve_npc(self, skyrim):
         """Resolve an NPC_ record with ACBS."""
-        npcs = skyrim.get_records_by_signature('NPC_')
+        npcs = list(skyrim.get_records_by_signature('NPC_'))
         assert len(npcs) > 0
 
         # Find an NPC with ACBS
@@ -217,7 +217,7 @@ class TestSkyrimRecords:
     @pytest.mark.slow
     def test_resolve_lvli(self, skyrim):
         """Resolve a LVLI record."""
-        lvlis = skyrim.get_records_by_signature('LVLI')
+        lvlis = list(skyrim.get_records_by_signature('LVLI'))
         assert len(lvlis) > 0
 
         for lvli in lvlis[:20]:
@@ -230,7 +230,7 @@ class TestSkyrimRecords:
     @pytest.mark.slow
     def test_weap_dnam_size_matches_schema(self, skyrim):
         """DNAM subrecord size should match our schema's expected size."""
-        weapons = skyrim.get_records_by_signature('WEAP')
+        weapons = list(skyrim.get_records_by_signature('WEAP'))
         for weapon in weapons[:50]:
             dnam = weapon.get_subrecord('DNAM')
             if dnam:
@@ -246,7 +246,7 @@ class TestSkyrimRecords:
     @pytest.mark.slow
     def test_all_weap_resolve_without_crash(self, skyrim):
         """All WEAP records should resolve without exceptions."""
-        weapons = skyrim.get_records_by_signature('WEAP')
+        weapons = list(skyrim.get_records_by_signature('WEAP'))
         errors = []
         for weapon in weapons[:200]:  # Test first 200
             try:
@@ -261,7 +261,7 @@ class TestSkyrimRecords:
     @pytest.mark.slow
     def test_all_armo_resolve_without_crash(self, skyrim):
         """All ARMO records should resolve without exceptions."""
-        armors = skyrim.get_records_by_signature('ARMO')
+        armors = list(skyrim.get_records_by_signature('ARMO'))
         errors = []
         for armor in armors[:200]:
             try:
@@ -291,7 +291,7 @@ class TestSkyrimRecords:
     @pytest.mark.gamefiles
     @pytest.mark.slow
     def test_bulk_resolve_hdpt(self, skyrim):
-        hdpts = skyrim.get_records_by_signature('HDPT')
+        hdpts = list(skyrim.get_records_by_signature('HDPT'))
         assert len(hdpts) > 0
         errors = []
         for hp in hdpts[:200]:
@@ -305,7 +305,7 @@ class TestSkyrimRecords:
     @pytest.mark.gamefiles
     @pytest.mark.slow
     def test_bulk_resolve_arma(self, skyrim):
-        armas = skyrim.get_records_by_signature('ARMA')
+        armas = list(skyrim.get_records_by_signature('ARMA'))
         assert len(armas) > 0
         errors = []
         for arma in armas[:200]:
@@ -319,7 +319,7 @@ class TestSkyrimRecords:
     @pytest.mark.gamefiles
     @pytest.mark.slow
     def test_bulk_resolve_race(self, skyrim):
-        races = skyrim.get_records_by_signature('RACE')
+        races = list(skyrim.get_records_by_signature('RACE'))
         assert len(races) > 0
         errors = []
         for race in races:
@@ -334,7 +334,7 @@ class TestSkyrimRecords:
     @pytest.mark.slow
     def test_npc_with_head_parts(self, skyrim):
         """Find an NPC with head parts and verify they resolve."""
-        npcs = skyrim.get_records_by_signature('NPC_')
+        npcs = list(skyrim.get_records_by_signature('NPC_'))
         for npc in npcs[:100]:
             pnam = npc.get_subrecords('PNAM')
             if len(pnam) > 0:
@@ -352,7 +352,7 @@ class TestSkyrimRecords:
     @pytest.mark.slow
     def test_npc_with_tint_layers(self, skyrim):
         """Find an NPC with tint layers."""
-        npcs = skyrim.get_records_by_signature('NPC_')
+        npcs = list(skyrim.get_records_by_signature('NPC_'))
         for npc in npcs[:200]:
             tini = npc.get_subrecords('TINI')
             if len(tini) > 0:

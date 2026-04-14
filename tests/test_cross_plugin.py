@@ -101,7 +101,7 @@ class TestDawnguardCrossPlugin:
     def test_dawnguard_has_weapons(self, dawnguard_set):
         """Dawnguard.esm should contain WEAP records."""
         dawnguard = dawnguard_set.get_plugin('Dawnguard.esm')
-        weapons = dawnguard.get_records_by_signature('WEAP')
+        weapons = list(dawnguard.get_records_by_signature('WEAP'))
         assert len(weapons) > 0
 
 
@@ -127,7 +127,7 @@ class TestDawnguardCrossPlugin:
         dawnguard = dawnguard_set.get_plugin('Dawnguard.esm')
         dawnguard.set_game('tes5')
 
-        weapons = dawnguard.get_records_by_signature('WEAP')
+        weapons = list(dawnguard.get_records_by_signature('WEAP'))
         assert len(weapons) > 0
 
         errors = []
