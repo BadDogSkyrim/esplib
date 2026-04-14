@@ -33,9 +33,9 @@ class PluginHeader:
         header._raw_record = record
 
         # Parse header flags
-        header.is_esm = bool(record.flags & 0x00000001)
-        header.is_esl = bool(record.flags & 0x00000200)
-        header.is_localized = bool(record.flags & 0x00000080)
+        header.is_esm = record.flags.Master
+        header.is_esl = record.flags.Light
+        header.is_localized = record.flags.Localized
 
         for subrecord in record.subrecords:
             if subrecord.signature == "HEDR":
@@ -75,13 +75,9 @@ class PluginHeader:
             record = self._raw_record
 
             # Update flags
-            record.flags &= ~(0x00000001 | 0x00000200 | 0x00000080)
-            if self.is_esm:
-                record.flags |= 0x00000001
-            if self.is_esl:
-                record.flags |= 0x00000200
-            if self.is_localized:
-                record.flags |= 0x00000080
+            record.flags.Master = self.is_esm
+            record.flags.Light = self.is_esl
+            record.flags.Localized = self.is_localized
 
             # Update HEDR
             hedr = record.get_subrecord("HEDR")
@@ -96,14 +92,9 @@ class PluginHeader:
 
         # Build from scratch
         record = Record("TES4", FormID(0))
-        flags = 0
-        if self.is_esm:
-            flags |= 0x00000001
-        if self.is_esl:
-            flags |= 0x00000200
-        if self.is_localized:
-            flags |= 0x00000080
-        record.flags = flags
+        record.flags.Master = self.is_esm
+        record.flags.Light = self.is_esl
+        record.flags.Localized = self.is_localized
 
         hedr = record.add_subrecord("HEDR")
         writer = BinaryWriter()

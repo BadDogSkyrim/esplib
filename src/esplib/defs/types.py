@@ -53,40 +53,86 @@ class IntType(Enum):
 # Formatters -- EspFlags, EspEnum
 # ---------------------------------------------------------------------------
 
+def _flag_attr_name(name: str) -> str:
+    """Normalize a flag name for attribute access: strip spaces, hyphens,
+    apostrophes. 'Auto-calc Stats' -> 'AutocalcStats'."""
+    return name.replace(' ', '').replace("'", '').replace('-', '')
+
+
 class FlagSet:
-    """A decoded set of flags supporting attribute, item, and containment access.
+    """A mutable set of flags supporting attribute, item, and containment access.
 
     Usage:
-        flags.Female          # True/False
-        flags['Female']       # True/False
-        'Female' in flags     # True if the flag is set
-        int(flags)            # raw integer value
-        for name in flags:    # iterate over set flag names
+        flags.Female              # read
+        flags.Female = True       # write
+        flags['Female']           # read by original name
+        flags['Non-Equippable']   # read by original name
+        'Female' in flags         # True if the flag is set
+        int(flags)                # raw integer value
+        for name in flags:        # iterate over set flag names
     """
 
     def __init__(self, value: int, names: Dict[int, str]):
-        self._value = value
-        self._names = names  # bit -> name
-        self._flags = {}
-        self._name_to_bit = {}
+        # Use object.__setattr__ for internal state to bypass our own __setattr__
+        object.__setattr__(self, '_value', value)
+        object.__setattr__(self, '_names', names)  # bit -> name
+        object.__setattr__(self, '_flags', {})     # original_name -> bool
+        object.__setattr__(self, '_name_to_bit', {})  # name or attr -> bit
+        object.__setattr__(self, '_attr_to_name', {})  # attr -> original_name
         for bit, name in names.items():
-            is_set = bool(value & (1 << bit))
-            # Store with Pythonic attribute name (lowercase, underscored)
-            attr = name.replace(' ', '_').replace("'", '').replace('-', '_')
-            self._flags[name] = is_set
+            self._flags[name] = bool(value & (1 << bit))
             self._name_to_bit[name] = bit
+            attr = _flag_attr_name(name)
             self._name_to_bit[attr] = bit
-            object.__setattr__(self, attr, is_set)
+            self._attr_to_name[attr] = name
+
+
+    def __getattr__(self, key: str) -> bool:
+        # __getattr__ only fires when normal lookup fails, so internal
+        # state (_value etc.) still reads normally.
+        attr_to_name = object.__getattribute__(self, '_attr_to_name')
+        if key in attr_to_name:
+            return self._flags[attr_to_name[key]]
+        raise AttributeError(key)
+
+
+    def __setattr__(self, key: str, value) -> None:
+        # Internal state starts with '_'
+        if key.startswith('_'):
+            object.__setattr__(self, key, value)
+            return
+        attr_to_name = object.__getattribute__(self, '_attr_to_name')
+        if key in attr_to_name:
+            self[attr_to_name[key]] = value
+            return
+        raise AttributeError(
+            f"FlagSet has no flag named {key!r}; known: "
+            f"{sorted(attr_to_name)}")
 
 
     def __getitem__(self, name: str) -> bool:
         if name in self._flags:
             return self._flags[name]
-        # Try attribute-style name
-        attr = name.replace(' ', '_').replace("'", '').replace('-', '_')
-        if attr in self._flags:
-            return self._flags[attr]
+        attr = _flag_attr_name(name)
+        if attr in self._attr_to_name:
+            return self._flags[self._attr_to_name[attr]]
         raise KeyError(name)
+
+
+    def __setitem__(self, name: str, is_set) -> None:
+        is_set = bool(is_set)
+        bit = self._name_to_bit.get(name)
+        if bit is None:
+            attr = _flag_attr_name(name)
+            bit = self._name_to_bit.get(attr)
+        if bit is None:
+            raise KeyError(f"Unknown flag: {name}")
+        original = self._names[bit]
+        self._flags[original] = is_set
+        if is_set:
+            self._value |= (1 << bit)
+        else:
+            self._value &= ~(1 << bit)
 
 
     def __contains__(self, name: str) -> bool:
@@ -117,6 +163,10 @@ class FlagSet:
         if isinstance(other, int):
             return self._value == other
         return NotImplemented
+
+
+    def __hash__(self):
+        return hash(self._value)
 
 
 class FlagConst:
