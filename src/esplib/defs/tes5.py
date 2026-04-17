@@ -351,6 +351,15 @@ MISC = EspRecord.new('MISC', 'Misc Item', [
     ])),
 ])
 
+_LEVELED_ENTRY_STRUCT = EspStruct.new('entry', [
+    EspInteger.new('level', IntType.U16),
+    EspByteArray.new('padding', size=2),
+    EspFormID.new('reference'),
+    EspInteger.new('count', IntType.U16),
+    EspByteArray.new('padding2', size=2),
+])
+
+
 LVLI = EspRecord.new('LVLI', 'Leveled Item', [
     common.EDID,
     common.OBND,
@@ -363,13 +372,26 @@ LVLI = EspRecord.new('LVLI', 'Leveled Item', [
                      EspFormID.new('global', ['GLOB'])),
     EspSubRecord.new('LLCT', 'Entry Count',
                      EspInteger.new('count', IntType.U8)),
-    EspSubRecord.new('LVLO', 'Leveled List Entry', EspStruct.new('entry', [
-        EspInteger.new('level', IntType.U16),
-        EspByteArray.new('padding', size=2),
-        EspFormID.new('reference'),
-        EspInteger.new('count', IntType.U16),
-        EspByteArray.new('padding2', size=2),
-    ])),
+    EspSubRecord.new('LVLO', 'Leveled List Entry', _LEVELED_ENTRY_STRUCT),
+])
+
+LVLN = EspRecord.new('LVLN', 'Leveled NPC', [
+    common.EDID,
+    common.OBND,
+    EspSubRecord.new('LVLD', 'Chance None',
+                     EspInteger.new('chance_none', IntType.U8)),
+    EspSubRecord.new('LVLF', 'Flags',
+                     EspInteger.new('flags', IntType.U8,
+                                    formatter=common.LeveledItemFlags)),
+    EspSubRecord.new('LVLG', 'Global',
+                     EspFormID.new('global', ['GLOB'])),
+    EspSubRecord.new('LLCT', 'Entry Count',
+                     EspInteger.new('count', IntType.U8)),
+    EspSubRecord.new('LVLO', 'Leveled List Entry', _LEVELED_ENTRY_STRUCT),
+    EspSubRecord.new('MODL', 'Model File',
+                     EspString.new('model', 'zstring', encoding='cp1252')),
+    EspSubRecord.new('MODT', 'Model Texture Data',
+                     EspByteArray.new('modt')),
 ])
 
 COBJ = EspRecord.new('COBJ', 'Constructible Object', [
@@ -1218,7 +1240,7 @@ def register():
     for record_def in [
         GMST, GLOB, KYWD, FLST,
         WEAP, ARMO, ALCH, AMMO, BOOK, MISC,
-        LVLI, COBJ, FACT, NPC_,
+        LVLI, LVLN, COBJ, FACT, NPC_,
         HDPT, ARMA, RACE,
     ]:
         registry.register(record_def)
