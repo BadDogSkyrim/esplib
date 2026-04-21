@@ -1,8 +1,12 @@
 """Minimal read-only BSA archive reader for Skyrim LE/SE.
 
-Supports BSA version 0x68 (Skyrim LE) and 0x69 (Skyrim SE) with
-optional per-file zlib compression. Only provides file listing and
+Supports BSA version 0x68 (Skyrim LE, zlib compression) and 0x69
+(Skyrim SE, LZ4-frame compression). Only provides file listing and
 extraction by path.
+
+LE and SE differ in their compression format. Calling code treats
+`read_file` opaquely — the reader picks the right codec based on the
+version header.
 """
 
 import struct
@@ -100,6 +104,7 @@ class BsaReader:
                 f"Unsupported BSA version 0x{version:02x} in {self.path}")
 
         is_sse = (version == 0x69)
+        self._is_sse = is_sse
         self._compressed_by_default = bool(
             archive_flags & _COMPRESSED_BY_DEFAULT)
         self._embed_file_names = bool(
@@ -165,10 +170,25 @@ class BsaReader:
         if is_compressed:
             original_size = struct.unpack('<I', f.read(4))[0]
             compressed_data = f.read(raw_size - 4)
+            if self._is_sse:
+                # SSE BSAs (v0x69) use LZ4 frame format (magic
+                # 04224d18). Lazy-import so LE-only deployments don't
+                # need the `lz4` wheel.
+                try:
+                    import lz4.frame
+                except ImportError as e:
+                    raise BsaError(
+                        f"SSE BSA requires the `lz4` package to decompress "
+                        f"{entry.path}: {e}")
+                try:
+                    return lz4.frame.decompress(compressed_data)
+                except Exception as e:
+                    raise BsaError(
+                        f"LZ4 decompression failed for {entry.path}: {e}")
             try:
                 return zlib.decompress(compressed_data)
             except zlib.error as e:
                 raise BsaError(
-                    f"Decompression failed for {entry.path}: {e}")
+                    f"zlib decompression failed for {entry.path}: {e}")
         else:
             return f.read(raw_size)

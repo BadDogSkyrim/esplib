@@ -23,7 +23,11 @@ classifiers = [
     "Topic :: Games/Entertainment",
     "Topic :: Software Development :: Libraries :: Python Modules",
 ]
-dependencies = []
+dependencies = [
+    # LZ4-frame decompression for Skyrim SE BSAs (version 0x69).
+    # LE BSAs use zlib which is stdlib, so this is only needed for SSE.
+    "lz4>=4.0",
+]
 
 [project.optional-dependencies]
 dev = [
