@@ -170,13 +170,21 @@ class PluginSet:
                     self._override_index[fid_val] = OverrideChain()
                 self._override_index[fid_val].add(plugin_name, record)
 
+    # 0xFF is the save-time sentinel for "this plugin's own new record"
+    # used by Plugin.get_next_form_id() — the real file index gets
+    # stamped in at save. For in-memory resolution we treat it the
+    # same as file_idx == num_masters (self-reference).
+    _LOCAL_SENTINEL = 0xFF
+
     def _resolve_absolute_form_id(self, form_id: FormID,
                                    plugin: Plugin) -> Optional[AbsoluteFormID]:
         """Resolve a plugin-local FormID to an absolute FormID.
 
         The file_index byte of a FormID indexes into the plugin's master
         list. Index 0 = first master, index N = the plugin itself (where
-        N = number of masters).
+        N = number of masters). The sentinel 0xFF is also treated as
+        "this plugin's own record" — this covers in-memory records
+        created via Plugin.get_next_form_id() before save-time fixup.
         """
         file_idx = form_id.file_index
         masters = plugin.header.masters
@@ -189,8 +197,9 @@ class PluginSet:
             if lo_idx < 0:
                 return None
             return AbsoluteFormID((lo_idx << 24) | form_id.object_index)
-        elif file_idx == num_masters:
-            # This plugin's own record
+        elif file_idx == num_masters or file_idx == self._LOCAL_SENTINEL:
+            # This plugin's own record (either the real post-save
+            # file_idx or the pre-save sentinel).
             plugin_name = None
             if plugin.file_path:
                 plugin_name = plugin.file_path.name
