@@ -135,6 +135,24 @@ class TestStructGameRegistry:
             assert registry.get(sig) is not None, f"{sig} not registered"
 
 
+    def test_txst_registered(self):
+        """TXST (texture set) carries the eight TX00..TX07 texture
+        path slots that mods reference everywhere; surfaced as the
+        single biggest unscanned record type in find_missing_assets,
+        added 2026-04-24."""
+        registry = GameRegistry.get_game('tes5')
+        txst = registry.get('TXST')
+        assert txst is not None, "TXST not registered"
+        # Each TX0n slot is present and exposes a zstring value
+        # named 'texture' so consumers can detect path subrecords by
+        # the value_def name without per-slot special cases.
+        sigs = {m.signature for m in txst.members
+                if hasattr(m, 'signature')}
+        for slot in ('TX00', 'TX01', 'TX02', 'TX03',
+                     'TX04', 'TX05', 'TX06', 'TX07'):
+            assert slot in sigs, f"TXST missing slot {slot}"
+
+
 # ---------------------------------------------------------------------------
 # Real game file tests (requires Skyrim.esm)
 # ---------------------------------------------------------------------------
@@ -211,6 +229,26 @@ class TestSkyrimRecords:
                     assert 'level' in config
                     assert 'flags' in config
                     break
+
+
+    @pytest.mark.gamefiles
+    @pytest.mark.slow
+    def test_resolve_txst(self, skyrim):
+        """Resolve a TXST record and read back its texture slot
+        paths. Skyrim.esm has thousands of TXSTs; the first one
+        with a non-empty TX00 is enough to confirm parsing works."""
+        for txst in skyrim.get_records_by_signature('TXST'):
+            tx00 = txst.get_subrecord('TX00')
+            if tx00 is None:
+                continue
+            result = tes5.TXST.from_record(txst)
+            # Slot subrecord descriptions are the dict keys.
+            color_path = result.get('Color Map')
+            assert isinstance(color_path, str), color_path
+            assert color_path, "Color Map should be a non-empty path"
+            assert color_path.lower().endswith('.dds'), color_path
+            return
+        pytest.skip("No TXST with TX00 found")
 
 
     @pytest.mark.gamefiles

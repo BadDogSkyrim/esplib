@@ -513,6 +513,47 @@ RaceFlags = EspFlags.new({
     31: 'Avoids Roads',
 })
 
+TXST = EspRecord.new('TXST', 'Texture Set', [
+    common.EDID,
+    common.OBND,
+    # TX00..TX07 are the eight texture slots referenced by the
+    # TXST. They're all zstring file paths under `Data\textures\`.
+    # All share `name='texture'` so consumers can detect "this
+    # field is a file path" via a single value_def name; the
+    # subrecord descriptions carry the per-slot semantics for
+    # to_dict output / docs.
+    EspSubRecord.new('TX00', 'Color Map',
+                     EspString.new('texture', 'zstring')),
+    EspSubRecord.new('TX01', 'Normal/Gloss Map',
+                     EspString.new('texture', 'zstring')),
+    EspSubRecord.new('TX02', 'Environment Mask / Subsurface Tint',
+                     EspString.new('texture', 'zstring')),
+    EspSubRecord.new('TX03', 'Glow / Detail Map',
+                     EspString.new('texture', 'zstring')),
+    EspSubRecord.new('TX04', 'Height Map',
+                     EspString.new('texture', 'zstring')),
+    EspSubRecord.new('TX05', 'Environment Map',
+                     EspString.new('texture', 'zstring')),
+    EspSubRecord.new('TX06', 'Multilayer Mask',
+                     EspString.new('texture', 'zstring')),
+    EspSubRecord.new('TX07', 'Backlight Mask / Specular',
+                     EspString.new('texture', 'zstring')),
+    # DODT is decal data (24-byte struct in vanilla, ~52 in some
+    # SE plugins). Contents aren't useful to us; pass through as
+    # raw bytes so round-trip is preserved.
+    EspSubRecord.new('DODT', 'Decal Data',
+                     EspByteArray.new('dodt')),
+    # DNAM is a uint16 flag word: 0=NoSpecular, 1=FacegenTextures,
+    # 2=HasModelSpaceNormalMap (rest unknown / unused).
+    EspSubRecord.new('DNAM', 'Flags',
+                     EspInteger.new('flags', IntType.U16,
+                                    formatter=EspFlags.new({
+                                        0: 'No Specular',
+                                        1: 'FaceGen Textures',
+                                        2: 'Has Model Space Normal Map',
+                                    }))),
+])
+
 HDPT = EspRecord.new('HDPT', 'Head Part', [
     common.EDID,
     common.FULL,
@@ -1241,7 +1282,7 @@ def register():
         GMST, GLOB, KYWD, FLST,
         WEAP, ARMO, ALCH, AMMO, BOOK, MISC,
         LVLI, LVLN, COBJ, FACT, NPC_,
-        HDPT, ARMA, RACE,
+        HDPT, ARMA, RACE, TXST,
     ]:
         registry.register(record_def)
 
