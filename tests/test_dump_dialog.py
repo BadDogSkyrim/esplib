@@ -34,6 +34,7 @@ class TestDumpDialog:
         and the editing workflow can rely on it."""
         assert CSV_COLUMNS == [
             'form_id', 'plugin', 'quest_edid', 'dial_edid', 'dial_full',
+            'new_dial_full',
             'info_edid', 'response_index', 'original_text', 'new_text',
             'notes',
         ]
@@ -53,6 +54,7 @@ class TestDumpDialog:
         first = rows[0]
         assert first['plugin'] == 'Skyrim.esm'
         assert first['dial_full'] == "I've got things to do."
+        assert first['new_dial_full'] == ''
         assert first['quest_edid'] == 'DA03'
         assert first['response_index'] == 0
         assert first['original_text'] == (

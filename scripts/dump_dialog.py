@@ -44,6 +44,7 @@ from esplib.record import Record, GroupRecord
 
 CSV_COLUMNS = [
     'form_id', 'plugin', 'quest_edid', 'dial_edid', 'dial_full',
+    'new_dial_full',
     'info_edid', 'response_index', 'original_text', 'new_text', 'notes',
 ]
 
@@ -150,6 +151,7 @@ def iter_dialog_rows(plugin, plugin_set=None):
                     'quest_edid': quest_edid,
                     'dial_edid': dial_edid,
                     'dial_full': dial_full,
+                    'new_dial_full': '',
                     'info_edid': info_edid,
                     'response_index': response_index,
                     'original_text': original_text,

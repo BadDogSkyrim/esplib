@@ -34,6 +34,7 @@ def make_row(**overrides):
         'quest_edid': 'DA03',
         'dial_edid': 'DA03BarbasGreeting1A',
         'dial_full': "I've got things to do.",
+        'new_dial_full': '',
         'info_edid': '',
         'response_index': '0',
         'original_text': "I know, I know... Wars to fight, dragons to confront, guild business to conduct.",
@@ -59,7 +60,9 @@ class TestParseEdits:
     def test_real_edit_picked_up(self):
         edits, plugin_name = parse_edits([make_row(new_text='Hello.')])
         assert plugin_name == 'Skyrim.esm'
-        assert edits == {'[00] 01BFC2': {0: 'Hello.'}}
+        assert edits == {
+            '[00] 01BFC2': {'responses': {0: 'Hello.'}, 'new_dial_full': None}
+        }
 
     def test_multiple_responses_same_info(self):
         rows = [
@@ -68,12 +71,36 @@ class TestParseEdits:
             make_row(response_index='2', original_text='same', new_text='same'),
         ]
         edits, _ = parse_edits(rows)
-        assert edits == {'[00] 01BFC2': {0: 'A', 1: 'B'}}
+        assert edits == {
+            '[00] 01BFC2': {'responses': {0: 'A', 1: 'B'}, 'new_dial_full': None}
+        }
 
     def test_mixed_plugins_rejected(self):
         rows = [make_row(plugin='Skyrim.esm', new_text='A'),
                 make_row(plugin='Other.esp', new_text='B')]
         with pytest.raises(ValueError):
+            parse_edits(rows)
+
+    def test_dial_full_edit_picked_up(self):
+        edits, _ = parse_edits([
+            make_row(new_dial_full='New topic line.'),
+        ])
+        assert edits == {
+            '[00] 01BFC2': {'responses': {}, 'new_dial_full': 'New topic line.'}
+        }
+
+    def test_dial_full_unchanged_skipped(self):
+        edits, _ = parse_edits([
+            make_row(new_dial_full="I've got things to do."),  # same as dial_full
+        ])
+        assert edits == {}
+
+    def test_dial_full_inconsistent_within_one_info_raises(self):
+        rows = [
+            make_row(response_index='0', new_dial_full='A'),
+            make_row(response_index='1', original_text='x', new_dial_full='B'),
+        ]
+        with pytest.raises(ValueError, match='Inconsistent new_dial_full'):
             parse_edits(rows)
 
 
@@ -89,8 +116,8 @@ class TestBuildPatch:
         rows = [make_row(new_text=new_text)]
 
         patch_path = tmp_path / 'BarbasPatch.esp'
-        n = build_patch(rows, skyrim_plugin, patch_path)
-        assert n == 1
+        stats = build_patch(rows, skyrim_plugin, patch_path)
+        assert stats == {'infos_overridden': 1, 'dials_overridden': 1}
         assert patch_path.exists()
 
         patch = Plugin.load(patch_path)
@@ -145,8 +172,8 @@ class TestBuildPatch:
     def test_no_edits_produces_no_patch(self, skyrim_plugin, tmp_path):
         rows = [make_row(new_text='')]
         patch_path = tmp_path / 'NoEdits.esp'
-        n = build_patch(rows, skyrim_plugin, patch_path)
-        assert n == 0
+        stats = build_patch(rows, skyrim_plugin, patch_path)
+        assert stats == {'infos_overridden': 0, 'dials_overridden': 0}
         assert not patch_path.exists()
 
     def test_multi_response_only_edits_targeted(self, skyrim_plugin, tmp_path):
@@ -174,8 +201,8 @@ class TestBuildPatch:
         ]
 
         patch_path = tmp_path / 'Bersi.esp'
-        n = build_patch(rows, skyrim_plugin, patch_path)
-        assert n == 1
+        stats = build_patch(rows, skyrim_plugin, patch_path)
+        assert stats == {'infos_overridden': 1, 'dials_overridden': 1}
 
         patch = Plugin.load(patch_path)
         info = next(r for r in patch.records if r.signature == 'INFO')
@@ -183,3 +210,56 @@ class TestBuildPatch:
         # All three NAM1s must be inline zstrings now
         texts = [s.data.rstrip(b'\x00').decode('cp1252') for s in nam1s]
         assert texts == [originals[0], new_resp1, originals[2]]
+
+    def test_dial_full_only_edit_produces_dial_only_override(
+            self, skyrim_plugin, tmp_path):
+        """A row that only edits new_dial_full (no new_text) should
+        override the parent DIAL with a new FULL but write zero INFO
+        overrides. The patch's topic-children group is empty for that
+        DIAL."""
+        new_full = "I'm in a hurry."
+        rows = [make_row(new_dial_full=new_full)]
+
+        patch_path = tmp_path / 'DialOnly.esp'
+        stats = build_patch(rows, skyrim_plugin, patch_path)
+        assert stats == {'infos_overridden': 0, 'dials_overridden': 1}
+
+        patch = Plugin.load(patch_path)
+        dials = [r for r in patch.records if r.signature == 'DIAL']
+        assert len(dials) == 1
+        assert dials[0].editor_id == 'DA03BarbasGreeting1A'
+        full = dials[0].get_subrecord('FULL')
+        assert full is not None
+        assert full.data.rstrip(b'\x00').decode('cp1252') == new_full
+        # No INFO records in the patch
+        assert [r for r in patch.records if r.signature == 'INFO'] == []
+        # Topic-children group is present but empty
+        top = next(g for g in patch.groups
+                   if g.group_type == 0 and g.label == 'DIAL')
+        type7 = [c for c in top.records
+                 if isinstance(c, GroupRecord) and c.group_type == 7]
+        assert len(type7) == 1
+        assert [r for r in type7[0].records
+                if isinstance(r, Record) and r.signature == 'INFO'] == []
+
+    def test_dial_full_and_response_edits_combined(
+            self, skyrim_plugin, tmp_path):
+        """Editing both the topic line and a response on the same
+        INFO produces a single DIAL override with the new FULL plus
+        an INFO override with the new NAM1."""
+        new_full = "Hey dog."
+        new_resp = "Go fetch a stick."
+        rows = [make_row(new_dial_full=new_full, new_text=new_resp)]
+
+        patch_path = tmp_path / 'BarbasBoth.esp'
+        stats = build_patch(rows, skyrim_plugin, patch_path)
+        assert stats == {'infos_overridden': 1, 'dials_overridden': 1}
+
+        patch = Plugin.load(patch_path)
+        dial = next(r for r in patch.records if r.signature == 'DIAL')
+        info = next(r for r in patch.records if r.signature == 'INFO')
+
+        assert (dial.get_subrecord('FULL').data.rstrip(b'\x00')
+                .decode('cp1252') == new_full)
+        assert (info.get_subrecord('NAM1').data.rstrip(b'\x00')
+                .decode('cp1252') == new_resp)
