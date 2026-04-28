@@ -285,6 +285,12 @@ class TestSkyrimRecords:
         # TIFC is the count of INFOs under this DIAL; at least 1.
         tifc = dial['TIFC']
         assert isinstance(tifc, int) and tifc >= 1
+        # FULL is the topic text the player sees. Skyrim.esm is
+        # localized so the parsed value is a uint32 string-table ID;
+        # the plugin resolves it back to the dialog line.
+        full = dial['FULL']
+        assert isinstance(full, int)
+        assert skyrim.resolve_string(full) == "I've got things to do."
 
 
     @pytest.mark.gamefiles
