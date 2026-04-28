@@ -103,6 +103,20 @@ class TestParseEdits:
         with pytest.raises(ValueError, match='Inconsistent new_dial_full'):
             parse_edits(rows)
 
+    def test_dial_full_only_one_row_filled_accepted(self):
+        """User only fills new_dial_full on one row of an INFO and
+        leaves the other rows empty. The non-empty value wins; the
+        empty cells are silently skipped, no consistency error."""
+        rows = [
+            make_row(response_index='0', new_dial_full='New topic.'),
+            make_row(response_index='1', original_text='x', new_dial_full=''),
+            make_row(response_index='2', original_text='y'),  # default empty
+        ]
+        edits, _ = parse_edits(rows)
+        assert edits == {
+            '[00] 01BFC2': {'responses': {}, 'new_dial_full': 'New topic.'}
+        }
+
 
 @pytest.mark.gamefiles
 @pytest.mark.slow
