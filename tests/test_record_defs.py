@@ -153,6 +153,42 @@ class TestStructGameRegistry:
             assert slot in sigs, f"TXST missing slot {slot}"
 
 
+    def test_dial_registered(self):
+        """DIAL (dialog topic) — needed for dialog-dump tooling so
+        each INFO's parent topic + quest can be reported alongside
+        the response text."""
+        registry = GameRegistry.get_game('tes5')
+        dial = registry.get('DIAL')
+        assert dial is not None, "DIAL not registered"
+        sigs = {m.signature for m in dial.members
+                if hasattr(m, 'signature')}
+        for sig in ('EDID', 'FULL', 'PNAM', 'QNAM', 'DATA',
+                    'SNAM', 'TIFC'):
+            assert sig in sigs, f"DIAL missing {sig}"
+
+
+    def test_info_registered(self):
+        """INFO (dialog response) — the actual lines of dialog. NAM1
+        carries the response text; SNAM the voice-file FormID. Both
+        are inside a repeating Response group (one per response
+        variant on the INFO)."""
+        registry = GameRegistry.get_game('tes5')
+        info = registry.get('INFO')
+        assert info is not None, "INFO not registered"
+        # Top-level subrecords + at least one Response group with
+        # NAM1 and SNAM.
+        flat_sigs = set()
+        def _collect(members):
+            for m in members:
+                if hasattr(m, 'members'):
+                    _collect(m.members)
+                elif hasattr(m, 'signature'):
+                    flat_sigs.add(m.signature)
+        _collect(info.members)
+        for sig in ('ENAM', 'CNAM', 'TRDT', 'NAM1', 'NAM2', 'SNAM'):
+            assert sig in flat_sigs, f"INFO missing {sig}"
+
+
 # ---------------------------------------------------------------------------
 # Real game file tests (requires Skyrim.esm)
 # ---------------------------------------------------------------------------
@@ -229,6 +265,45 @@ class TestSkyrimRecords:
                     assert 'level' in config
                     assert 'flags' in config
                     break
+
+
+    @pytest.mark.gamefiles
+    @pytest.mark.slow
+    def test_resolve_dial(self, skyrim):
+        """Resolve a DIAL record by EDID and read parsed values.
+        DA03BarbasGreeting1A is a known stable dialog topic in
+        vanilla; QNAM points at its parent quest."""
+        dial = skyrim.get_record_by_editor_id('DA03BarbasGreeting1A')
+        if not dial:
+            pytest.skip("DA03BarbasGreeting1A not in Skyrim.esm")
+        dial.bind_schema(tes5.DIAL)
+        # PNAM is a float (dialog priority).
+        assert isinstance(dial['PNAM'], float)
+        # QNAM is a quest FormID — should resolve to a real QUST.
+        qnam = dial['QNAM']
+        assert qnam is not None
+        # TIFC is the count of INFOs under this DIAL; at least 1.
+        tifc = dial['TIFC']
+        assert isinstance(tifc, int) and tifc >= 1
+
+
+    @pytest.mark.gamefiles
+    @pytest.mark.slow
+    def test_resolve_info(self, skyrim):
+        """Resolve an INFO record. INFOs rarely have an EDID, so
+        find the first one whose first response has a NAM1 and
+        verify the response group parses."""
+        for info in skyrim.get_records_by_signature('INFO'):
+            if info.get_subrecord('NAM1') is None:
+                continue
+            info.bind_schema(tes5.INFO)
+            # NAM1 in a localized plugin (Skyrim.esm is localized) is
+            # a uint32 string-table ID; we don't resolve the string
+            # here — just confirm the field type round-trips.
+            nam1 = info['NAM1']
+            assert nam1 is not None
+            return
+        pytest.skip("No INFO with NAM1 found")
 
 
     @pytest.mark.gamefiles

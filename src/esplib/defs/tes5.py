@@ -7,7 +7,7 @@ from .types import (
     IntType, EspFlags, EspEnum,
     EspInteger, EspFloat, EspString, EspFormID, EspByteArray,
     EspGmstValue, EspAlternateTextures,
-    EspStruct, EspArray, EspSubRecord, EspGroup, EspRecord,
+    EspStruct, EspArray, EspUnion, EspSubRecord, EspGroup, EspRecord,
 )
 from . import common
 from .game import GameRegistry
@@ -553,6 +553,107 @@ TXST = EspRecord.new('TXST', 'Texture Set', [
                                         2: 'Has Model Space Normal Map',
                                     }))),
 ])
+
+DIAL = EspRecord.new('DIAL', 'Dialog Topic', [
+    common.EDID,
+    common.FULL,
+    EspSubRecord.new('PNAM', 'Priority',
+                     EspFloat.new('priority')),
+    # Branch / parent quest pointers. Both are FormIDs into other
+    # records: BNAM → DLBR (dialog branch), QNAM → QUST. QNAM is
+    # what dialog-dump tooling traces to attach a quest name to
+    # each row.
+    EspSubRecord.new('BNAM', 'Branch',
+                     EspFormID.new('branch', ['DLBR'])),
+    EspSubRecord.new('QNAM', 'Quest',
+                     EspFormID.new('quest', ['QUST'])),
+    # 4 packed bytes: filter flags + flags + category + subtype id.
+    # We don't decode further — leave to consumers / xEdit.
+    EspSubRecord.new('DATA', 'Data',
+                     EspByteArray.new('data')),
+    # 4-character ASCII subtype tag (e.g. "CUST", "GREE", "BUSY").
+    EspSubRecord.new('SNAM', 'Subtype Name',
+                     EspByteArray.new('subtype_name')),
+    EspSubRecord.new('TIFC', 'INFO Count',
+                     EspInteger.new('info_count', IntType.U32)),
+])
+
+
+# INFO (dialog response) carries one or more "Response" groups —
+# each is a TRDT response-data struct followed by NAM1 (text) /
+# NAM2 (script note) / NAM3 (edits-made note) / optional LNAM
+# (idle FormID) / optional SNAM (sound FormID). Multiple response
+# groups per INFO are rare but exist for randomly-picked variants.
+# We schema each subrecord type once inside an EspGroup so the
+# member names match xEdit's; consumers iterating by index walk
+# raw subrecords linearly because esplib's record[sig] accessor
+# only returns the first matching subrecord.
+_INFO_RESPONSE = EspGroup.new('Response', [
+    EspSubRecord.new('TRDT', 'Response Data',
+                     EspByteArray.new('response_data')),
+    # NAM1 follows the same localized-vs-inline pattern as FULL:
+    # 4-byte uint32 string-table ID in localized plugins,
+    # inline lstring otherwise. ctx.extra['subrecord_size'] picks.
+    EspSubRecord.new('NAM1', 'Response Text', EspUnion.new(
+        'text',
+        decider=lambda ctx: (
+            0 if ctx.extra.get('subrecord_size', 0) == 4 else 1),
+        members=[
+            EspInteger.new('string_id', IntType.U32),
+            EspString.new('text', 'lstring'),
+        ],
+    )),
+    EspSubRecord.new('NAM2', 'Script Notes',
+                     EspString.new('script_notes', 'zstring')),
+    EspSubRecord.new('NAM3', 'Edits',
+                     EspString.new('edits', 'zstring')),
+    EspSubRecord.new('LNAM', 'Idle (Listener)',
+                     EspFormID.new('idle_listener', ['IDLE'])),
+    EspSubRecord.new('SNAM', 'Sound',
+                     EspFormID.new('sound', ['SNDR'])),
+])
+
+
+INFO = EspRecord.new('INFO', 'Dialog Response', [
+    common.EDID,
+    EspSubRecord.new('DATA', 'Data',
+                     EspByteArray.new('data')),
+    EspSubRecord.new('ENAM', 'Response Flags',
+                     EspByteArray.new('response_flags')),
+    EspSubRecord.new('PNAM', 'Previous INFO',
+                     EspFormID.new('previous_info', ['INFO'])),
+    EspSubRecord.new('CNAM', 'Favor Level',
+                     EspInteger.new('favor_level', IntType.U8)),
+    _INFO_RESPONSE,
+    # Trailing fields after the response group(s). CTDA blocks
+    # (conditions) interleave; we leave them as ByteArray since
+    # CTDA's internal structure is its own can of worms.
+    EspSubRecord.new('CTDA', 'Condition',
+                     EspByteArray.new('condition')),
+    EspSubRecord.new('CIS1', 'Condition String 1',
+                     EspString.new('cis1', 'zstring')),
+    EspSubRecord.new('CIS2', 'Condition String 2',
+                     EspString.new('cis2', 'zstring')),
+    EspSubRecord.new('TCLT', 'Link To',
+                     EspFormID.new('link_to', ['INFO'])),
+    EspSubRecord.new('DNAM', 'Shared Info',
+                     EspFormID.new('shared_info', ['INFO'])),
+    EspSubRecord.new('SCHR', 'Script Header',
+                     EspByteArray.new('script_header')),
+    EspSubRecord.new('SCDA', 'Script Data',
+                     EspByteArray.new('script_data')),
+    EspSubRecord.new('SCTX', 'Script Source',
+                     EspString.new('script_source', 'zstring')),
+    EspSubRecord.new('VMAD', 'Script Attachments',
+                     EspByteArray.new('vmad')),
+    EspSubRecord.new('QNAM', 'Quest',
+                     EspFormID.new('quest', ['QUST'])),
+    EspSubRecord.new('BNAM', 'Speaker',
+                     EspFormID.new('speaker', ['NPC_', 'VTYP'])),
+    EspSubRecord.new('KNAM', 'Keyword',
+                     EspFormID.new('keyword', ['KYWD'])),
+])
+
 
 HDPT = EspRecord.new('HDPT', 'Head Part', [
     common.EDID,
@@ -1283,6 +1384,7 @@ def register():
         WEAP, ARMO, ALCH, AMMO, BOOK, MISC,
         LVLI, LVLN, COBJ, FACT, NPC_,
         HDPT, ARMA, RACE, TXST,
+        DIAL, INFO,
     ]:
         registry.register(record_def)
 
