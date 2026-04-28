@@ -102,18 +102,14 @@ def _iter_responses(info):
             snam = False
             started = True
         elif sub.signature == 'NAM1' and started and nam1 is None:
-            # Match the EspUnion FULL/NAM1 pattern: 4-byte payload
-            # is a string id, anything else is an inline lstring.
+            # 4-byte payload = uint32 string-table id (localized
+            # plugin); anything else = inline zstring (non-localized).
             if len(sub.data) == 4:
                 import struct
                 nam1 = struct.unpack('<I', sub.data)[0]
             else:
-                # inline lstring: uint16 length + cp1252 bytes
-                if len(sub.data) >= 2:
-                    nam1 = sub.data[2:].rstrip(b'\x00').decode(
-                        'cp1252', errors='replace')
-                else:
-                    nam1 = ''
+                nam1 = sub.data.rstrip(b'\x00').decode(
+                    'cp1252', errors='replace')
         elif sub.signature == 'SNAM' and started:
             snam = True
     if started:
@@ -172,27 +168,56 @@ def write_csv(rows, out):
 def _build_plugin_set(plugin_path, data_dir=None):
     """Load plugin via PluginSet so QNAMs resolve across masters.
 
-    If data_dir is None, fall back to the plugin's directory."""
+    The target plugin can live anywhere on disk (e.g. inside a Vortex
+    or MO2 mod folder, outside the deployed Data directory). Masters
+    are loaded from data_dir; the target plugin is loaded directly
+    from its given path and injected into the set so override
+    resolution finds it. If data_dir is None, falls back to the
+    plugin's own directory."""
     plugin_path = Path(plugin_path)
     if data_dir is None:
         data_dir = plugin_path.parent
     else:
         data_dir = Path(data_dir)
 
-    # Read the plugin's master list to build a load order
-    p_header_only = Plugin.load(plugin_path)
-    masters = list(p_header_only.header.masters)
-    plugin_name = plugin_path.name
-    if plugin_name not in masters:
-        masters.append(plugin_name)
-
-    lo = LoadOrder.from_list(masters, data_dir=data_dir, game_id='tes5')
-    ps = PluginSet(lo)
     strings_dir = find_strings_dir()
+
+    # Load the target plugin directly from its actual path -- it may
+    # not be in data_dir (e.g. a Vortex mod folder).
+    target = Plugin()
+    if strings_dir:
+        target.string_search_dirs = [str(strings_dir)]
+    target._load(plugin_path)
+
+    masters = list(target.header.masters)
+    plugin_name = plugin_path.name
+
+    # Masters that aren't in data_dir won't contribute to QNAM
+    # resolution -- quest_edid will be blank for quests defined in
+    # those plugins. Warn but don't fail; this is mild for a dump.
+    missing = [m for m in masters if not (data_dir / m).exists()]
+    if missing:
+        print(f"Warning: masters not found under {data_dir}: {missing}\n"
+              f"  quest_edid will be blank for quests defined in those "
+              f"plugins.\n  Use --no-resolve to skip cross-plugin "
+              f"resolution entirely.", file=sys.stderr)
+        masters = [m for m in masters if m not in missing]
+
+    lo = LoadOrder.from_list(masters + [plugin_name],
+                             data_dir=data_dir, game_id='tes5')
+    ps = PluginSet(lo)
     if strings_dir:
         ps.string_search_dirs = [str(strings_dir)]
     ps.load_all()
-    return ps, ps.get_plugin(plugin_name)
+
+    # Inject the target plugin so resolution works even when the file
+    # lives outside data_dir.
+    ps._plugins[plugin_name] = target
+    ps._loaded_full[plugin_name] = True
+    target.plugin_set = ps
+    ps._override_index = None
+
+    return ps, target
 
 
 def main(argv=None):

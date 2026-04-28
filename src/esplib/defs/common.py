@@ -23,14 +23,16 @@ EDID = EspSubRecord.new('EDID', 'Editor ID',
 
 # Full Name -- localized string.
 # In localized plugins: 4-byte uint32 string table ID.
-# In non-localized plugins: inline lstring (uint16 length prefix + text).
-# We use a union that checks the subrecord size to pick the right interpretation.
+# In non-localized plugins: inline null-terminated string (zstring).
+# xEdit calls this kind of field "lstring" but that's the abstract
+# may-be-localized concept, not the EspString uint16-length-prefix
+# encoding -- Bethesda writes inline FULL/DESC/NAM1 as zstrings.
 FULL = EspSubRecord.new('FULL', 'Name', EspUnion.new(
     'name',
     decider=lambda ctx: 0 if ctx.extra.get('subrecord_size', 0) == 4 else 1,
     members=[
         EspInteger.new('string_id', IntType.U32),
-        EspString.new('name', 'lstring'),
+        EspString.new('name', 'zstring'),
     ],
 ))
 
@@ -39,7 +41,7 @@ DESC = EspSubRecord.new('DESC', 'Description', EspUnion.new(
     decider=lambda ctx: 0 if ctx.extra.get('subrecord_size', 0) == 4 else 1,
     members=[
         EspInteger.new('string_id', IntType.U32),
-        EspString.new('desc', 'lstring'),
+        EspString.new('desc', 'zstring'),
     ],
 ))
 

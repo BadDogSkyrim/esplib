@@ -269,6 +269,22 @@ class TestSkyrimRecords:
 
     @pytest.mark.gamefiles
     @pytest.mark.slow
+    def test_inline_full_parses_as_zstring(self):
+        """Regression: non-localized plugins store FULL/DESC/NAM1
+        as inline zstrings (null-terminated, no length prefix), not
+        as uint16-length-prefixed strings. The schema's union-with-
+        zstring path must read these without raising. The lstring
+        encoding (uint16 length) was an earlier mistake that crashed
+        on any non-localized plugin's FULL/NAM1."""
+        record = Record('ARMO', FormID(0x800), 0)
+        record.add_subrecord('EDID', b'TestArmor\x00')
+        record.add_subrecord('FULL', b'Steel Helmet\x00')
+        record.bind_schema(tes5.ARMO)
+        # Subrecord size is 13 (12 chars + null) — not 4 — so the
+        # union picks the inline zstring branch.
+        assert record['FULL'] == 'Steel Helmet'
+
+
     def test_resolve_dial(self, skyrim):
         """Resolve a DIAL record by EDID and read parsed values.
         DA03BarbasGreeting1A is a known stable dialog topic in

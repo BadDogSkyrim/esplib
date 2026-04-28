@@ -593,14 +593,14 @@ _INFO_RESPONSE = EspGroup.new('Response', [
                      EspByteArray.new('response_data')),
     # NAM1 follows the same localized-vs-inline pattern as FULL:
     # 4-byte uint32 string-table ID in localized plugins,
-    # inline lstring otherwise. ctx.extra['subrecord_size'] picks.
+    # inline zstring otherwise. ctx.extra['subrecord_size'] picks.
     EspSubRecord.new('NAM1', 'Response Text', EspUnion.new(
         'text',
         decider=lambda ctx: (
             0 if ctx.extra.get('subrecord_size', 0) == 4 else 1),
         members=[
             EspInteger.new('string_id', IntType.U32),
-            EspString.new('text', 'lstring'),
+            EspString.new('text', 'zstring'),
         ],
     )),
     EspSubRecord.new('NAM2', 'Script Notes',
