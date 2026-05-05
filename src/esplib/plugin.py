@@ -2,6 +2,7 @@
 
 import struct
 import shutil
+import threading
 from pathlib import Path
 from typing import List, Optional, Union, Dict, Iterator, Any
 from .record import Record, SubRecord, GroupRecord
@@ -137,6 +138,14 @@ class Plugin:
         self.string_search_dirs: list = []  # Additional dirs to search for .STRINGS files
         self.plugin_set = None  # Optional[PluginSet] — set when loaded via PluginSet
         self._local_formid_fixups = []  # list[(SubRecord, offset)] for save-time fixup
+        # RLock so the same thread can re-enter (copy_record calls
+        # add_record under lock; save() may invoke helpers that also
+        # touch the structures). The lock guards all mutations
+        # (add_record, copy_record, remove_record) and serialization
+        # (save, to_bytes), so concurrent writers — e.g. the GUI's
+        # preview-bake thread and run thread sharing one patch — can't
+        # interleave a partial mutation into a save's snapshot.
+        self._lock = threading.RLock()
 
         # Indexes for fast lookups
         self._new_records: List[Record] = []  # Records created by add_record with fresh FormIDs
@@ -310,37 +319,38 @@ class Plugin:
 
 
     def add_record(self, record: Record, group_signature: Optional[str] = None) -> None:
-        record.plugin = self
-        if record.form_id.value == 0:
-            record.form_id = self.get_next_form_id()
-        if record.form_id.file_index == self._LOCAL_SENTINEL:
-            self._new_records.append(record)
-        if self._game_registry:
-            if record.version == 44:
-                # Set record version to match the game
-                record.version = self._RECORD_VERSIONS.get(
-                    self._game_registry.game_id, 44)
-            if record.schema is None:
-                schema = self._game_registry.get(record.signature)
-                if schema is not None:
-                    record.bind_schema(schema)
-        self.records.append(record)
+        with self._lock:
+            record.plugin = self
+            if record.form_id.value == 0:
+                record.form_id = self.get_next_form_id()
+            if record.form_id.file_index == self._LOCAL_SENTINEL:
+                self._new_records.append(record)
+            if self._game_registry:
+                if record.version == 44:
+                    # Set record version to match the game
+                    record.version = self._RECORD_VERSIONS.get(
+                        self._game_registry.game_id, 44)
+                if record.schema is None:
+                    schema = self._game_registry.get(record.signature)
+                    if schema is not None:
+                        record.bind_schema(schema)
+            self.records.append(record)
 
-        target_group = None
-        group_sig = group_signature or record.signature
+            target_group = None
+            group_sig = group_signature or record.signature
 
-        for group in self.groups:
-            if (group.group_type == 0 and
-                    isinstance(group.label, str) and
-                    group.label == group_sig):
-                target_group = group
-                break
+            for group in self.groups:
+                if (group.group_type == 0 and
+                        isinstance(group.label, str) and
+                        group.label == group_sig):
+                    target_group = group
+                    break
 
-        if not target_group:
-            target_group = GroupRecord(0, group_sig)
-            self.groups.append(target_group)
+            if not target_group:
+                target_group = GroupRecord(0, group_sig)
+                self.groups.append(target_group)
 
-        target_group.add_record(record)
+            target_group.add_record(record)
 
         self._form_id_index[record.form_id.value] = record
         if record.editor_id:
@@ -353,29 +363,30 @@ class Plugin:
         self.modified = True
 
     def remove_record(self, record: Record) -> bool:
-        if record not in self.records:
-            return False
+        with self._lock:
+            if record not in self.records:
+                return False
 
-        self.records.remove(record)
+            self.records.remove(record)
 
-        for group in self.groups:
-            if self._remove_record_from_group(group, record):
-                break
+            for group in self.groups:
+                if self._remove_record_from_group(group, record):
+                    break
 
-        self._form_id_index.pop(record.form_id.value, None)
-        if record.editor_id:
-            self._editor_id_index.pop(record.editor_id.lower(), None)
+            self._form_id_index.pop(record.form_id.value, None)
+            if record.editor_id:
+                self._editor_id_index.pop(record.editor_id.lower(), None)
 
-        if record.signature in self._signature_index:
-            try:
-                self._signature_index[record.signature].remove(record)
-                if not self._signature_index[record.signature]:
-                    del self._signature_index[record.signature]
-            except ValueError:
-                pass
+            if record.signature in self._signature_index:
+                try:
+                    self._signature_index[record.signature].remove(record)
+                    if not self._signature_index[record.signature]:
+                        del self._signature_index[record.signature]
+                except ValueError:
+                    pass
 
-        self.modified = True
-        return True
+            self.modified = True
+            return True
 
     def _remove_record_from_group(self, group: GroupRecord, record: Record) -> bool:
         if record in group.records:
@@ -610,36 +621,37 @@ class Plugin:
 
         Returns the new record.
         """
-        source = source_plugin or record.plugin
-        ps = source.plugin_set if source else None
-        new_record = record.copy()
+        with self._lock:
+            source = source_plugin or record.plugin
+            ps = source.plugin_set if source else None
+            new_record = record.copy()
 
-        if source is not None:
-            if self.plugin_set is not None:
-                # New path: normalize to load-order, then denormalize to patch
-                norm_fid = source.normalize_form_id(record.form_id)
-                new_record.form_id = FormID(
-                    self.denormalize_form_id(norm_fid))
-            else:
-                # Legacy path: direct remap for bare plugins without PluginSet
-                new_record.form_id = FormID(
-                    self.remap_formid(record.form_id.value, source))
+            if source is not None:
+                if self.plugin_set is not None:
+                    # New path: normalize to load-order, then denormalize to patch
+                    norm_fid = source.normalize_form_id(record.form_id)
+                    new_record.form_id = FormID(
+                        self.denormalize_form_id(norm_fid))
+                else:
+                    # Legacy path: direct remap for bare plugins without PluginSet
+                    new_record.form_id = FormID(
+                        self.remap_formid(record.form_id.value, source))
 
-            # Remap FormIDs inside subrecords
-            self._remap_subrecord_formids(new_record, source)
+                # Remap FormIDs inside subrecords
+                self._remap_subrecord_formids(new_record, source)
 
-        if not self.is_localized:
-            # Pass the original record's normalized FormID for override
-            # chain lookup — new_record.form_id is in patch master-list
-            # space which won't match the load-order-indexed chain.
-            orig_norm = None
-            if source is not None and ps is not None:
-                orig_norm = source.normalize_form_id(record.form_id)
-            self._delocalize_strings(new_record, source, ps,
-                                     chain_form_id=orig_norm)
+            if not self.is_localized:
+                # Pass the original record's normalized FormID for override
+                # chain lookup — new_record.form_id is in patch master-list
+                # space which won't match the load-order-indexed chain.
+                orig_norm = None
+                if source is not None and ps is not None:
+                    orig_norm = source.normalize_form_id(record.form_id)
+                self._delocalize_strings(new_record, source, ps,
+                                         chain_form_id=orig_norm)
 
-        self.add_record(new_record)
-        return new_record
+            self.add_record(new_record)
+            return new_record
 
     def _remap_subrecord_formids(self, record: 'Record',
                                  source: 'Plugin') -> None:
@@ -885,7 +897,7 @@ class Plugin:
         local_index = len(self.header.masters)
         sentinel = self._LOCAL_SENTINEL
 
-        for record in self._new_records:
+        for record in getattr(self, '_new_records', ()):
             if record.form_id.file_index == sentinel:
                 record.form_id = FormID(
                     (local_index << 24) | record.form_id.object_index)
@@ -910,9 +922,12 @@ class Plugin:
     def _apply_local_formid_fixups(self) -> None:
         """Walk the fixup list and set the file index byte to the
         final local index on every registered local FormID location."""
+        fixups = getattr(self, '_local_formid_fixups', None)
+        if not fixups:
+            return
         import struct as _struct
         local_index = len(self.header.masters)
-        for sr, offset in self._local_formid_fixups:
+        for sr, offset in fixups:
             if offset + 4 <= len(sr.data):
                 fid = _struct.unpack_from('<I', sr.data, offset)[0]
                 if (fid >> 24) == self._LOCAL_SENTINEL:
@@ -920,42 +935,43 @@ class Plugin:
                     new_data = bytearray(sr.data)
                     _struct.pack_into('<I', new_data, offset, new_fid)
                     sr.data = new_data
-        self._local_formid_fixups.clear()
+        fixups.clear()
 
 
     def save(self, file_path: Optional[Union[str, Path]] = None) -> None:
-        if file_path:
-            self.file_path = Path(file_path)
+        with self._lock:
+            if file_path:
+                self.file_path = Path(file_path)
 
-        if not self.file_path:
-            raise PluginError("No file path specified for saving")
+            if not self.file_path:
+                raise PluginError("No file path specified for saving")
 
-        # Replace sentinel file indices with the real local index.
-        self._finalize_local_form_ids()
-        self._apply_local_formid_fixups()
+            # Replace sentinel file indices with the real local index.
+            self._finalize_local_form_ids()
+            self._apply_local_formid_fixups()
 
-        # Update header record count (includes both records and groups)
-        self.header.num_records = self._count_records_and_groups()
+            # Update header record count (includes both records and groups)
+            self.header.num_records = self._count_records_and_groups()
 
-        # Create backup if file exists
-        if self.file_path.exists():
-            backup_path = self.file_path.with_suffix(self.file_path.suffix + '.bak')
-            if not backup_path.exists():
-                shutil.copy2(self.file_path, backup_path)
+            # Create backup if file exists
+            if self.file_path.exists():
+                backup_path = self.file_path.with_suffix(self.file_path.suffix + '.bak')
+                if not backup_path.exists():
+                    shutil.copy2(self.file_path, backup_path)
 
-        # Write plugin data
-        writer = BinaryWriter()
-        header_record = self.header.to_record()
-        writer.write_bytes(header_record.to_bytes())
+            # Write plugin data
+            writer = BinaryWriter()
+            header_record = self.header.to_record()
+            writer.write_bytes(header_record.to_bytes())
 
-        for group in self.groups:
-            writer.write_bytes(group.to_bytes())
+            for group in self.groups:
+                writer.write_bytes(group.to_bytes())
 
-        self.file_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(self.file_path, 'wb') as f:
-            f.write(writer.get_bytes())
+            self.file_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(self.file_path, 'wb') as f:
+                f.write(writer.get_bytes())
 
-        self.modified = False
+            self.modified = False
 
     def save_as(self, file_path: Union[str, Path]) -> None:
         old_path = self.file_path
@@ -965,13 +981,29 @@ class Plugin:
             self.file_path = old_path
 
     def to_bytes(self) -> bytes:
-        """Serialize the entire plugin to bytes without writing to disk."""
-        writer = BinaryWriter()
-        header_record = self.header.to_record()
-        writer.write_bytes(header_record.to_bytes())
-        for group in self.groups:
-            writer.write_bytes(group.to_bytes())
-        return writer.get_bytes()
+        """Serialize the entire plugin to bytes without writing to disk.
+
+        Refreshes HEDR.num_records and applies any pending sentinel
+        FormID fixups so the bytes match what `save()` would write.
+        """
+        # getattr fallback: tests construct Plugin via __new__ and may
+        # skip __init__ entirely. Guard the lock attr too.
+        lock = getattr(self, '_lock', None)
+        if lock is not None:
+            lock.acquire()
+        try:
+            self._finalize_local_form_ids()
+            self._apply_local_formid_fixups()
+            self.header.num_records = self._count_records_and_groups()
+            writer = BinaryWriter()
+            header_record = self.header.to_record()
+            writer.write_bytes(header_record.to_bytes())
+            for group in self.groups:
+                writer.write_bytes(group.to_bytes())
+            return writer.get_bytes()
+        finally:
+            if lock is not None:
+                lock.release()
 
     @property
     def is_esm(self) -> bool:

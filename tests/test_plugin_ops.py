@@ -1149,3 +1149,69 @@ class TestStructNPCTintAutoSort:
         full_idx = all_sigs.index('FULL')
         tini_idx = all_sigs.index('TINI')
         assert full_idx < tini_idx, "FULL should come before tints"
+
+
+# ===================================================================
+# Concurrency
+# ===================================================================
+
+
+class TestConcurrentMutationAndSave:
+    """The Plugin's RLock should keep concurrent add_record + save
+    from producing a file whose HEDR.num_records doesn't match the
+    record count CK reads back. This was the crash mode behind
+    YASNPCPatch_2025_05_04.esp: GUI preview-bake thread mutated the
+    same patch the run thread was saving."""
+
+
+    def test_save_snapshot_consistent_under_concurrent_add(self, tmp_path):
+        """Without the Plugin._lock, this reproduces the failure mode
+        CK reported on YASNPCPatch_2025_05_04.esp: a mutating thread
+        slips records into self.groups between save()'s
+        _count_records_and_groups() and the per-group serialization,
+        so HEDR.num_records ends up smaller than the actual record
+        count in the file.
+        """
+        import threading
+
+        plugin = Plugin.new_plugin(
+            tmp_path / "concurrent.esp",
+            masters=['Skyrim.esm'], game='tes5')
+
+        # Seed enough records that save() spends measurable time
+        # serializing groups (so the mutator has a real window).
+        for i in range(100):
+            rec = Record('GLOB', FormID(0))
+            rec.add_subrecord('EDID').set_string(f'Seed{i:04d}')
+            plugin.add_record(rec)
+
+        save_done = threading.Event()
+        mutate_count = [0]
+
+        def mutator():
+            i = 0
+            # Cap total iterations so the test can't run away if
+            # save() returns instantly on a slow machine.
+            while not save_done.is_set() and i < 5000:
+                rec = Record('NPC_', FormID(0))
+                rec.add_subrecord('EDID').set_string(f'Concurrent{i:06d}')
+                plugin.add_record(rec)
+                i += 1
+            mutate_count[0] = i
+
+        t = threading.Thread(target=mutator)
+        t.start()
+        try:
+            plugin.save()
+        finally:
+            save_done.set()
+            t.join()
+
+        # Re-load and check internal consistency. Header must match
+        # actual on-disk count exactly — the symptom CK flagged.
+        reloaded = Plugin.load(tmp_path / "concurrent.esp")
+        assert reloaded.header.num_records == \
+            reloaded._count_records_and_groups(), (
+                f"Header {reloaded.header.num_records} != "
+                f"actual {reloaded._count_records_and_groups()} "
+                f"(mutator added {mutate_count[0]} records during save)")

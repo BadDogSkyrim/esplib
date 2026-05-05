@@ -282,7 +282,8 @@ class TestStructPluginRoundTrip:
 
         rec = make_record('WEAP', 0x800, COMPRESSED_FLAG, sub_bytes)
         group = make_group('WEAP', 0, rec)
-        tes4 = make_tes4_record(flags=0x01, num_records=1)
+        # num_records counts records + groups (1 WEAP + 1 GRUP = 2).
+        tes4 = make_tes4_record(flags=0x01, num_records=2)
         raw = tes4 + group
 
         reader = BinaryReader(raw)

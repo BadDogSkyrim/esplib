@@ -121,19 +121,21 @@ def make_simple_plugin(records: list[tuple[str, int, bytes]] | None = None,
     """
     plugin_data = bytearray()
 
-    num_records = len(records) if records else 0
-    plugin_data.extend(make_tes4_record(
-        flags=tes4_flags, masters=masters, num_records=num_records))
-
+    # Group records by signature so we can size num_records correctly.
+    # HEDR.num_records counts records AND groups (one group per
+    # distinct signature here), matching what CK validates against.
+    groups: dict[str, list[bytes]] = {}
     if records:
-        # Group records by signature
-        groups: dict[str, list[bytes]] = {}
         for sig, fid, sub_bytes in records:
             rec = make_record(sig, fid, 0, sub_bytes)
             groups.setdefault(sig, []).append(rec)
 
-        for sig, recs in groups.items():
-            content = b''.join(recs)
-            plugin_data.extend(make_group(sig, 0, content))
+    num_records = (len(records) if records else 0) + len(groups)
+    plugin_data.extend(make_tes4_record(
+        flags=tes4_flags, masters=masters, num_records=num_records))
+
+    for sig, recs in groups.items():
+        content = b''.join(recs)
+        plugin_data.extend(make_group(sig, 0, content))
 
     return bytes(plugin_data)
