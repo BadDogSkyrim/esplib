@@ -126,6 +126,21 @@ class TestStructAddMaster:
         assert len(plugin.header.masters) == 3
 
 
+    def test_add_master_rejects_self(self, tmp_path):
+        """A plugin cannot master itself. The lazy-add path in
+        denormalize_form_id can reach add_master with the plugin's
+        own name when records' finalized form_ids round-trip
+        through a load order that includes the plugin (e.g.
+        furrifier's _inject_patch_into_plugin_set). xEdit reports
+        such files as circular references."""
+        plugin = Plugin.new_plugin(tmp_path / 'MyPatch.esp')
+        plugin.add_master('MyPatch.esp')
+        assert 'MyPatch.esp' not in plugin.header.masters
+        # Case-insensitive guard too.
+        plugin.add_master('MYPATCH.ESP')
+        assert plugin.header.masters == []
+
+
 class TestPluginAddRecursiveMasters:
 
 

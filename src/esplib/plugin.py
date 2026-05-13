@@ -550,7 +550,16 @@ class Plugin:
 
 
     def add_master(self, master_name: str) -> None:
-        """Add a master dependency if not already present."""
+        """Add a master dependency if not already present. A plugin
+        cannot master itself — silently ignore the self-add, since the
+        lazy-add path in denormalize_form_id can be reached with the
+        plugin's own name when its records' form_ids round-trip through
+        an injected-into-plugin_set load order (the patch ends up at
+        plugins_list[hi_byte] for hi_byte = post-finalize local index).
+        Without this guard, xEdit reports a circular reference."""
+        if (self.file_path is not None
+                and master_name.lower() == self.file_path.name.lower()):
+            return
         if master_name.lower() not in [m.lower() for m in self.header.masters]:
             self.header.masters.append(master_name)
             self.header.master_sizes.append(0)
