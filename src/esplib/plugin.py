@@ -1,5 +1,6 @@
 """Main Plugin class for reading and modifying Bethesda plugin files."""
 
+import logging
 import struct
 import shutil
 import threading
@@ -8,6 +9,9 @@ from typing import List, Optional, Union, Dict, Iterator, Any
 from .record import Record, SubRecord, GroupRecord
 from .utils import FormID, BaseFormID, AbsoluteFormID, BinaryReader, BinaryWriter
 from .exceptions import PluginError, ParseError, ValidationError
+
+
+_log = logging.getLogger(__name__)
 
 
 class PluginHeader:
@@ -928,6 +932,93 @@ class Plugin:
                 count += 1
         return count
 
+    def _debug_log_save_counts(self) -> None:
+        """Emit a DEBUG-level breakdown of what _count_records_and_groups
+        sees on the in-memory structure right before serialization.
+
+        Cross-checks self.records (flat list) against the per-group walk;
+        a mismatch suggests records were added to one but not the other.
+        """
+        if not _log.isEnabledFor(logging.DEBUG):
+            return
+        name = self.file_path.name if self.file_path else '<unsaved>'
+        total = self.header.num_records
+        _log.debug(
+            'save(%s): HEDR.num_records=%d  top_groups=%d  '
+            'self.records=%d (flat)',
+            name, total, len(self.groups), len(self.records))
+        flat_in_groups = 0
+        for g in self.groups:
+            n = self._count_in_group(g)
+            recs = n - 1  # subtract the group itself
+            flat_in_groups += self._flat_record_count(g)
+            label = g.label if isinstance(g.label, str) else hex(g.label)
+            _log.debug(
+                '  group %-4s type=%d: %d items (group + nested) = '
+                '%d records',
+                label, g.group_type, n, recs)
+        if flat_in_groups != len(self.records):
+            _log.warning(
+                'save(%s): records-in-groups (%d) != self.records (%d) '
+                '— mismatch of %d',
+                name, flat_in_groups, len(self.records),
+                flat_in_groups - len(self.records))
+
+    def _flat_record_count(self, group: GroupRecord) -> int:
+        """Count records (not groups) reachable from a group, recursively."""
+        n = 0
+        for item in group.records:
+            if isinstance(item, GroupRecord):
+                n += self._flat_record_count(item)
+            else:
+                n += 1
+        return n
+
+    def _debug_verify_written_count(self, payload: bytes) -> None:
+        """Byte-walk the just-written payload, compare to HEDR.num_records.
+
+        If they disagree, the count we wrote into the header doesn't
+        match the body — which is exactly the bug we're hunting.
+        """
+        if not _log.isEnabledFor(logging.DEBUG):
+            return
+        name = self.file_path.name if self.file_path else '<unsaved>'
+        records = 0
+        groups = 0
+
+        def walk(start: int, end: int) -> None:
+            nonlocal records, groups
+            p = start
+            while p < end - 7:
+                sig = payload[p:p+4]
+                size = struct.unpack_from('<I', payload, p+4)[0]
+                if sig == b'GRUP':
+                    groups += 1
+                    walk(p + 24, p + size)  # GRUP size includes 24-byte header
+                    p += size
+                else:
+                    records += 1
+                    p += 24 + size  # record header(24) + body
+        try:
+            tes4_data_size = struct.unpack_from('<I', payload, 4)[0]
+            walk(24 + tes4_data_size, len(payload))
+        except Exception as e:
+            _log.debug('save(%s): byte-walk verify failed: %s', name, e)
+            return
+        actual = records + groups
+        stored = self.header.num_records
+        if actual != stored:
+            _log.warning(
+                'save(%s): HEDR.num_records=%d but body contains '
+                '%d records + %d groups = %d (delta %+d)',
+                name, stored, records, groups, actual,
+                actual - stored)
+        else:
+            _log.debug(
+                'save(%s): post-write verify OK '
+                '(%d records + %d groups = %d == HEDR)',
+                name, records, groups, actual)
+
     def _apply_local_formid_fixups(self) -> None:
         """Walk the fixup list and set the file index byte to the
         final local index on every registered local FormID location."""
@@ -962,6 +1053,8 @@ class Plugin:
             # Update header record count (includes both records and groups)
             self.header.num_records = self._count_records_and_groups()
 
+            self._debug_log_save_counts()
+
             # Create backup if file exists
             if self.file_path.exists():
                 backup_path = self.file_path.with_suffix(self.file_path.suffix + '.bak')
@@ -977,8 +1070,11 @@ class Plugin:
                 writer.write_bytes(group.to_bytes())
 
             self.file_path.parent.mkdir(parents=True, exist_ok=True)
+            payload = writer.get_bytes()
             with open(self.file_path, 'wb') as f:
-                f.write(writer.get_bytes())
+                f.write(payload)
+
+            self._debug_verify_written_count(payload)
 
             self.modified = False
 
