@@ -7,7 +7,7 @@ from esplib.defs import (
     IntType, EspFlags, EspEnum,
     EspInteger, EspFloat, EspString, EspFormID, EspByteArray,
     EspStruct, EspArray, EspUnion,
-    EspSubRecord, EspRecord, EspContext,
+    EspSubRecord, EspGroup, EspRecord, EspContext,
 )
 from esplib.utils import BinaryReader, FormID
 from esplib.record import Record, SubRecord
@@ -596,3 +596,70 @@ class TestSerialization:
         d = defn.to_dict()
         assert d['type'] == 'formid'
         assert d['valid_refs'] == ['RACE']
+
+
+class TestGroupRestructure:
+    """Schema-driven subrecord grouping: a group instance may begin on any
+    member (not just its leader), and repeating nested groups keep their
+    interleaved pairing. Regression guard for the FO4 Object Template /
+    Actor Sounds shapes, exercised on synthetic schemas so the behavior is
+    pinned independently of any game definition.
+    """
+
+
+    def _roundtrip(self, schema, sigs):
+        from esplib.record import _restructure, _sort_and_flatten
+        subs = [SubRecord(s, b'\x00\x00\x00\x00') for s in sigs]
+        children = _restructure(subs, schema.members)
+        flat = _sort_and_flatten(children, schema.members)
+        return [s.signature for s in flat]
+
+
+    def _ot_schema(self):
+        # Mirrors FO4 Object Template: count + repeating combination + marker,
+        # where the combination reuses FULL (also a top-level sig elsewhere).
+        return EspRecord.new('TEST', 'T', [
+            EspSubRecord.new('OBTE', 'Count', EspByteArray.new('d')),
+            EspGroup.new('Combination', [
+                EspSubRecord.new('OBTF', 'Marker', EspByteArray.new('d')),
+                EspSubRecord.new('FULL', 'Name', EspByteArray.new('d')),
+                EspSubRecord.new('OBTS', 'Data', EspByteArray.new('d')),
+            ]),
+            EspSubRecord.new('STOP', 'End', EspByteArray.new('d')),
+        ])
+
+
+    def test_leader_led_combination(self):
+        s = self._ot_schema()
+        seq = ['OBTE', 'OBTF', 'FULL', 'OBTS', 'STOP']
+        assert self._roundtrip(s, seq) == seq
+
+
+    def test_multiple_combinations(self):
+        s = self._ot_schema()
+        seq = ['OBTE', 'OBTF', 'FULL', 'OBTS',
+               'OBTF', 'FULL', 'OBTS', 'STOP']
+        assert self._roundtrip(s, seq) == seq
+
+
+    def test_leaderless_combination(self):
+        # A combination stripped of its OBTF/FULL leaders, leaving a bare
+        # OBTS, must still bind to the group and stay before STOP.
+        s = self._ot_schema()
+        seq = ['OBTE', 'OBTS', 'STOP']
+        assert self._roundtrip(s, seq) == seq
+
+
+    def test_repeating_nested_pair(self):
+        # Mirrors FO4 Actor Sounds: repeating [CS2K, CS2D] pairs must keep
+        # their interleaving, not collapse to all-CS2K-then-all-CS2D.
+        s = EspRecord.new('TEST', 'T', [
+            EspSubRecord.new('CS2H', 'Count', EspByteArray.new('d')),
+            EspGroup.new('Sound', [
+                EspSubRecord.new('CS2K', 'Keyword', EspByteArray.new('d')),
+                EspSubRecord.new('CS2D', 'Sound', EspByteArray.new('d')),
+            ]),
+            EspSubRecord.new('CS2E', 'End', EspByteArray.new('d')),
+        ])
+        seq = ['CS2H', 'CS2K', 'CS2D', 'CS2K', 'CS2D', 'CS2K', 'CS2D', 'CS2E']
+        assert self._roundtrip(s, seq) == seq

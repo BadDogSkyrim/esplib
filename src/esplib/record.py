@@ -780,14 +780,20 @@ def _restructure(subrecords: List[SubRecord], members: list) -> List[ChildEntry]
     # Build lookup: for each member, what sigs does it accept?
     member_accepts: list[set[str]] = []
     member_leaders: list[Optional[str]] = []  # leader sig for groups
+    member_orders: list[dict] = []  # group: sig -> first index in flat order
     for member in members:
         if isinstance(member, EspGroup):
             flat = member.flat_subrecords()
             member_accepts.append({sr.signature for sr in flat})
             member_leaders.append(flat[0].signature if flat else None)
+            order: dict = {}
+            for i, sr in enumerate(flat):
+                order.setdefault(sr.signature, i)
+            member_orders.append(order)
         else:
             member_accepts.append({member.signature})
             member_leaders.append(None)
+            member_orders.append({})
 
     # All sigs accepted by any member
     all_known = set()
@@ -828,28 +834,31 @@ def _restructure(subrecords: List[SubRecord], members: list) -> List[ChildEntry]
         member = members[mi]
 
         if isinstance(member, EspGroup):
-            leader = member_leaders[mi]
             group_sigs = member_accepts[mi]
+            group_order = member_orders[mi]
 
-            if sig == leader:
-                # Start a new group instance
-                instance_subs = [subs[pos]]
+            # A group instance may start on ANY member, not only the first.
+            # The instance is anchored at the order-index of the first member
+            # actually present; a new instance begins when a later sig's
+            # order-index wraps back to or before that anchor. This correctly
+            # handles optional leading fields -- e.g. FO4 Object Template
+            # combinations whose OBTF/FULL markers are stripped, leaving a
+            # bare OBTS. The classic leader-led case is simply anchor == 0
+            # (only the leader has order-index 0), so behavior there is
+            # unchanged: the loop breaks on the next leader exactly as before.
+            anchor = group_order[sig]
+            instance_subs = [subs[pos]]
+            pos += 1
+            while pos < len(subs):
+                s = subs[pos].signature
+                if s not in group_sigs or group_order[s] <= anchor:
+                    break
+                instance_subs.append(subs[pos])
                 pos += 1
-                while pos < len(subs):
-                    s = subs[pos].signature
-                    if s not in group_sigs or s == leader:
-                        break
-                    instance_subs.append(subs[pos])
-                    pos += 1
-                inst = GroupInstance(member)
-                inst.children = _restructure(instance_subs, member.members)
-                children[mi].append(inst)
-                # Don't advance mi -- more instances of same group may follow
-            else:
-                # Non-leader sig that belongs to this group but appeared
-                # without a leader. Treat as unknown.
-                children.append(subs[pos])
-                pos += 1
+            inst = GroupInstance(member)
+            inst.children = _restructure(instance_subs, member.members)
+            children[mi].append(inst)
+            # Don't advance mi -- more instances of same group may follow
         else:
             # EspSubRecord: consume this subrecord
             existing = children[mi]

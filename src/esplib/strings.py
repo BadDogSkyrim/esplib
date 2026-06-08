@@ -19,9 +19,31 @@ File format (all three types share the same header):
 
 import struct
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 from .utils import BinaryReader, BinaryWriter
 from .exceptions import ParseError
+
+
+# Skyrim spells English as 'english'; Fallout 4 uses the ISO-ish 'en'.
+# Each logical language expands to the tokens seen in string-file names,
+# tried in order. Unknown languages just try themselves.
+_LANGUAGE_ALIASES = {
+    'english': ['english', 'en'],
+    'en': ['en', 'english'],
+    'french': ['french', 'fr'],
+    'german': ['german', 'de'],
+    'italian': ['italian', 'it'],
+    'spanish': ['spanish', 'es'],
+    'russian': ['russian', 'ru'],
+    'polish': ['polish', 'pl'],
+    'japanese': ['japanese', 'ja'],
+    'chinese': ['chinese', 'zh', 'cn'],
+}
+
+
+def _language_aliases(language: str) -> List[str]:
+    """Ordered language tokens to try for a logical language name."""
+    return _LANGUAGE_ALIASES.get(language.lower(), [language])
 
 
 class StringTable:
@@ -193,6 +215,7 @@ class StringTableManager:
         3. BSA archives matching the plugin name (e.g. PluginName.bsa)
         """
         plugin_name = plugin_path.stem
+        langs = _language_aliases(language)
         dirs = [plugin_path.parent / 'Strings']
         if search_dirs:
             dirs.extend(Path(d) for d in search_dirs)
@@ -203,75 +226,87 @@ class StringTableManager:
             (StringTable.ILSTRINGS, 'ilstrings'),
         ]
 
-        # Step 1-2: search extracted string files on disk
+        # Step 1-2: search extracted string files on disk. Try each
+        # language alias (e.g. 'english' then 'en' for FO4 naming).
         for table_type, attr in tables:
-            filename = f"{plugin_name}_{language}.{table_type}"
+            hit = None
             for d in dirs:
-                filepath = d / filename
-                if filepath.exists():
-                    setattr(self, attr, StringTable.from_file(filepath, table_type))
+                for lang in langs:
+                    filepath = d / f"{plugin_name}_{lang}.{table_type}"
+                    if filepath.exists():
+                        hit = filepath
+                        break
+                if hit:
                     break
+            if hit is not None:
+                setattr(self, attr, StringTable.from_file(hit, table_type))
 
-        # Step 3: if any tables are still missing, try BSA
+        # Step 3: if any tables are still missing, try BSA/BA2
         missing = [(tt, attr) for tt, attr in tables
                    if getattr(self, attr) is None]
         if missing:
-            self._load_from_bsa(plugin_path, plugin_name, language, missing)
+            self._load_from_bsa(plugin_path, plugin_name, langs, missing)
 
     def _load_from_bsa(self, plugin_path: Path, plugin_name: str,
-                       language: str, missing: list) -> None:
-        """Try to load missing string tables from BSA archives.
+                       langs, missing: list) -> None:
+        """Try to load missing string tables from BSA/BA2 archives.
+
+        ``langs`` is the ordered list of language tokens to try (e.g.
+        ['english', 'en']) — Skyrim BSAs use 'english', FO4 BA2s use 'en'.
 
         Search order:
-        1. PluginName.bsa, PluginName - Main.bsa (plugin-specific)
-        2. All BSAs in the Data directory (DLC strings are often in
-           shared BSAs like Skyrim - Interface.bsa)
+        1. PluginName.bsa/.ba2, PluginName - Main.bsa/.ba2 (plugin-specific)
+        2. All other BSAs/BA2s in the Data directory (vanilla strings live in
+           shared archives like Skyrim - Interface.bsa / Fallout4 - Interface.ba2)
         """
         import logging
         from .bsa import BsaReader, BsaError
+        from .ba2 import Ba2Reader
+
+        # Accept a bare string for backward compatibility.
+        if isinstance(langs, str):
+            langs = [langs]
 
         data_dir = plugin_path.parent
+        if not data_dir.exists():
+            return
 
-        # Plugin-specific BSAs first
-        candidates = [
-            data_dir / f"{plugin_name}.bsa",
-            data_dir / f"{plugin_name} - Main.bsa",
-        ]
-        # Then all other BSAs in the data dir
-        if data_dir.exists():
-            for p in sorted(data_dir.glob('*.bsa')):
-                if p not in candidates:
-                    candidates.append(p)
+        # (path, reader_class) pairs, plugin-specific archives first.
+        candidates = []
+        for ext, reader_cls in (('bsa', BsaReader), ('ba2', Ba2Reader)):
+            for stem in (plugin_name, f"{plugin_name} - Main"):
+                p = data_dir / f"{stem}.{ext}"
+                if p.exists():
+                    candidates.append((p, reader_cls))
+        # Then every other archive in the data dir.
+        for ext, reader_cls in (('bsa', BsaReader), ('ba2', Ba2Reader)):
+            for p in sorted(data_dir.glob(f'*.{ext}')):
+                if not any(p == c[0] for c in candidates):
+                    candidates.append((p, reader_cls))
 
-        bsa_file_key = f"strings\\{plugin_name}_{language}"
-
-        for bsa_path in candidates:
-            if not bsa_path.exists():
-                continue
+        for arch_path, reader_cls in candidates:
             if not missing:
                 break
             try:
-                with BsaReader(bsa_path) as bsa:
+                with reader_cls(arch_path) as arch:
                     still_missing = []
                     for table_type, attr in missing:
-                        bsa_file = f"{bsa_file_key}.{table_type}"
-                        if bsa.has_file(bsa_file):
-                            data = bsa.read_file(bsa_file)
+                        data = None
+                        for lang in langs:
+                            key = f"strings\\{plugin_name}_{lang}.{table_type}"
+                            if arch.has_file(key):
+                                data = arch.read_file(key)
+                                break
+                        if data:
                             setattr(self, attr,
                                     StringTable.from_bytes(data, table_type))
                         else:
                             still_missing.append((table_type, attr))
                     missing = still_missing
-            except BsaError as e:
+            except (BsaError, ValueError, OSError) as e:
                 logging.getLogger(__name__).debug(
-                    "Could not read BSA %s: %s", bsa_path.name, e)
+                    "Could not read archive %s: %s", arch_path.name, e)
                 continue
-
-            # Recompute what's still missing
-            missing = [(tt, a) for tt, a in missing
-                       if getattr(self, a) is None]
-            if not missing:
-                break
 
 
     def get_string(self, string_id: int) -> Optional[str]:

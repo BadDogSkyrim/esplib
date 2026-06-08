@@ -104,12 +104,15 @@ class PluginSet:
         """Find the file path for a plugin name."""
         return self.load_order.plugin_path(name)
 
-    def load_plugin(self, name: str, full: bool = True) -> Optional[Plugin]:
+    def load_plugin(self, name: str, full: bool = True,
+                    only_signatures: Optional[set] = None) -> Optional[Plugin]:
         """Load a single plugin by name.
 
         Args:
             name: Plugin filename (e.g. 'Skyrim.esm')
             full: If True, load all records. If False, header only.
+            only_signatures: If given, parse only these top-level record
+                groups (a fast partial load — see Plugin.load).
         """
         if name in self._plugins and self._loaded_full.get(name, False) >= full:
             return self._plugins[name]
@@ -122,7 +125,7 @@ class PluginSet:
         try:
             plugin = Plugin()
             plugin.string_search_dirs = list(self.string_search_dirs)
-            plugin._load(path)
+            plugin._load(path, only_signatures=only_signatures)
             plugin.plugin_set = self
             self._plugins[name] = plugin
             self._loaded_full[name] = True
@@ -133,11 +136,12 @@ class PluginSet:
             self._plugins[name] = None
             return None
 
-    def load_all(self) -> int:
-        """Load all plugins in the load order. Returns count of successfully loaded."""
+    def load_all(self, only_signatures: Optional[set] = None) -> int:
+        """Load all plugins in the load order. Returns count of successfully
+        loaded. `only_signatures` does a fast partial parse (see Plugin.load)."""
         count = 0
         for name in self.load_order:
-            if self.load_plugin(name) is not None:
+            if self.load_plugin(name, only_signatures=only_signatures) is not None:
                 count += 1
         return count
 

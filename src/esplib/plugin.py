@@ -137,6 +137,9 @@ class Plugin:
         self.records: List[Record] = []
         self.load_order: int = -1
         self.modified = False
+        # True if loaded with only_signatures (a partial parse — most record
+        # types were skipped). Callers must not save a partial plugin.
+        self.partial_load = False
         self._game_registry = None
         self.string_tables = None  # Optional[StringTableManager]
         self.string_search_dirs: list = []  # Additional dirs to search for .STRINGS files
@@ -161,14 +164,25 @@ class Plugin:
             self._load()
 
     @classmethod
-    def load(cls, file_path: Union[str, Path]) -> 'Plugin':
-        """Load a plugin from disk and return it."""
-        plugin = cls(file_path)
-        if not plugin.records:
-            plugin._load()
+    def load(cls, file_path: Union[str, Path],
+             only_signatures: Optional[set] = None) -> 'Plugin':
+        """Load a plugin from disk and return it.
+
+        `only_signatures` (a set of 4-char record signatures, e.g. {'NPC_'})
+        parses only the matching top-level groups and seeks past the rest —
+        a fast partial load for enumerating one record type without paying to
+        parse the whole file. The TES4 header is always parsed.
+        """
+        # Construct WITHOUT a path so the constructor's auto-load doesn't run
+        # (that would fully parse the file, defeating only_signatures); then
+        # load explicitly with the partial-parse option.
+        plugin = cls()
+        plugin.file_path = Path(file_path)
+        plugin._load(only_signatures=only_signatures)
         return plugin
 
-    def _load(self, file_path: Optional[Union[str, Path]] = None) -> None:
+    def _load(self, file_path: Optional[Union[str, Path]] = None,
+              only_signatures: Optional[set] = None) -> None:
         if file_path:
             self.file_path = Path(file_path)
 
@@ -179,14 +193,16 @@ class Plugin:
             data = f.read()
 
         reader = BinaryReader(data)
-        self._parse_plugin(reader)
+        self._parse_plugin(reader, only_signatures=only_signatures)
         self._link_records()
         self._load_string_tables()
         self._build_indexes()
         self.modified = False
         self.auto_detect_game()
+        self.partial_load = only_signatures is not None
 
-    def _parse_plugin(self, reader: BinaryReader) -> None:
+    def _parse_plugin(self, reader: BinaryReader,
+                      only_signatures: Optional[set] = None) -> None:
         self.groups.clear()
         self.records.clear()
 
@@ -206,6 +222,21 @@ class Plugin:
             signature = reader.data[reader.position:reader.position + 4]
 
             if signature == b'GRUP':
+                # For a partial load, peek the top-level group's label (a
+                # record signature for group_type 0) and seek past whole
+                # groups we don't care about without parsing their records.
+                if only_signatures is not None:
+                    start = reader.position
+                    group_size = struct.unpack_from(
+                        '<I', reader.data, start + 4)[0]
+                    label = reader.data[start + 8:start + 12]
+                    group_type = struct.unpack_from(
+                        '<i', reader.data, start + 12)[0]
+                    if (group_type == 0
+                            and label.rstrip(b'\x00').decode(
+                                'ascii', 'replace') not in only_signatures):
+                        reader.seek(start + group_size)
+                        continue
                 group = GroupRecord.from_bytes(reader)
                 self.groups.append(group)
                 self._collect_records_from_group(group)
@@ -622,7 +653,8 @@ class Plugin:
     })
 
     def copy_record(self, record: 'Record',
-                    source_plugin: Optional['Plugin'] = None) -> 'Record':
+                    source_plugin: Optional['Plugin'] = None,
+                    new_form_id: bool = False) -> 'Record':
         """Deep-copy a record into this plugin.
 
         Remaps all FormIDs from the source plugin's master-list indexing
@@ -632,6 +664,13 @@ class Plugin:
         IDs to inline null-terminated strings, falling back through the
         override chain if needed.
 
+        By default the copy is an OVERRIDE — it keeps the source's FormID
+        (denormalized into this plugin). Pass `new_form_id=True` to instead
+        mint a FRESH local FormID, producing an independent NEW record rather
+        than an override (e.g. duplicating a template into appearance variants).
+        Subrecord FormIDs are remapped either way; give the copy a distinct
+        EditorID afterward so it doesn't collide with the source.
+
         Returns the new record.
         """
         with self._lock:
@@ -640,7 +679,10 @@ class Plugin:
             new_record = record.copy()
 
             if source is not None:
-                if self.plugin_set is not None:
+                if new_form_id:
+                    # Leave FormID 0 so add_record assigns a fresh local one.
+                    new_record.form_id = FormID(0)
+                elif self.plugin_set is not None:
                     # New path: normalize to load-order, then denormalize to patch
                     norm_fid = source.normalize_form_id(record.form_id)
                     new_record.form_id = FormID(
@@ -778,12 +820,29 @@ class Plugin:
 
 
     def _remap_vmad(self, record: 'Record', source: 'Plugin') -> None:
-        """Remap FormIDs inside a VMAD subrecord (Papyrus script data)."""
+        """Remap FormIDs inside a VMAD subrecord (Papyrus script data).
+
+        The VMAD parser models the Skyrim property-type set; FO4 (and some
+        Skyrim mods) use property types it doesn't understand yet, which make
+        parsing raise. Rather than fail the whole copy, fall back to leaving
+        the VMAD bytes verbatim. That is correct whenever the source's master
+        ordering is preserved in this plugin (the common case — copying a
+        vanilla record into a patch that masters the same file at the same
+        index); embedded FormIDs that *would* move are the rare exception and
+        are logged so the gap is visible.
+        """
         from .vmad import VmadData
         vmad_sr = record.get_subrecord('VMAD')
         if vmad_sr is None:
             return
-        vmad = VmadData.parse(vmad_sr.data, record.signature)
+        try:
+            vmad = VmadData.parse(vmad_sr.data, record.signature)
+        except Exception as e:
+            _log.warning(
+                "VMAD on %s %s not remapped (parser: %s); preserving bytes "
+                "verbatim", record.signature, record.editor_id or
+                hex(record.form_id.value), e)
+            return
 
         def _remap(fid: int) -> int:
             if self.plugin_set is not None:

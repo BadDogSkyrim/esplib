@@ -41,11 +41,11 @@ class GameRegistry:
         # Skyrim SE: 1.70-1.71
         if 1.69 < header_version < 1.72:
             return cls._games.get('tes5')
-        # Skyrim LE: 0.94
-        if 0.93 < header_version < 0.95:
+        # Skyrim LE: 0.94 exactly
+        if 0.935 < header_version < 0.945:
             return cls._games.get('tes5')
-        # Fallout 4: 0.95-1.0
-        if 0.94 < header_version < 1.01:
+        # Fallout 4: 0.95 and 1.0 (avoid colliding with Skyrim LE's 0.94)
+        if 0.945 <= header_version < 1.01:
             return cls._games.get('fo4')
         return None
 
