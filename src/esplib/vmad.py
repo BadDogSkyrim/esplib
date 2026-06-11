@@ -30,11 +30,15 @@ PROP_STRING = 2
 PROP_INT32 = 3
 PROP_FLOAT = 4
 PROP_BOOL = 5
+PROP_VARIABLE = 6          # FO4: no serialized value (wbNull)
+PROP_STRUCT = 7            # FO4: u32 member count + members (each name/type/flags/value)
 PROP_OBJECT_ARRAY = 11
 PROP_STRING_ARRAY = 12
 PROP_INT32_ARRAY = 13
 PROP_FLOAT_ARRAY = 14
 PROP_BOOL_ARRAY = 15
+PROP_VARIABLE_ARRAY = 16   # FO4: a lone u32 count, no element data (wbStruct[u32])
+PROP_STRUCT_ARRAY = 17     # FO4: u32 count + that many structs (each u32 members)
 
 
 @dataclass
@@ -156,6 +160,13 @@ class VmadData:
                     for obj in prop.value:
                         if isinstance(obj, VmadObject) and obj.form_id:
                             obj.form_id = callback(obj.form_id)
+                elif prop.type == PROP_STRUCT and isinstance(prop.value, list):
+                    # Struct value = a list of members (each a property); recurse.
+                    _remap_properties(prop.value)
+                elif prop.type == PROP_STRUCT_ARRAY and isinstance(prop.value, list):
+                    # Array of Struct = a list of structs, each a member list.
+                    for members in prop.value:
+                        _remap_properties(members)
 
         for script in self.scripts:
             _remap_properties(script.properties)
@@ -371,8 +382,34 @@ def _read_property_value(r: _Reader, prop_type: int,
     elif prop_type == PROP_BOOL_ARRAY:
         count = r.uint32()
         return [bool(r.uint8()) for _ in range(count)]
+    elif prop_type == PROP_VARIABLE:
+        return None                       # wbNull — no serialized value
+    elif prop_type == PROP_STRUCT:
+        return _read_struct(r, obj_format)
+    elif prop_type == PROP_VARIABLE_ARRAY:
+        return r.uint32()                 # wbStruct([u32]) — a lone count, no elements
+    elif prop_type == PROP_STRUCT_ARRAY:
+        count = r.uint32()
+        return [_read_struct(r, obj_format) for _ in range(count)]
     else:
         raise ValueError(f"Unknown VMAD property type: {prop_type}")
+
+
+def _read_struct(r: _Reader, obj_format: int) -> list:
+    """A Struct value: u32 member count, then that many members. A member has
+    the same {name, type, flags, value} layout as a script property (and its
+    value can itself be a Struct / Array of Struct, so this recurses)."""
+    count = r.uint32()
+    return [_read_property(r, obj_format) for _ in range(count)]
+
+
+def _read_property(r: _Reader, obj_format: int) -> 'VmadProperty':
+    prop = VmadProperty()
+    prop.name = r.wstring()
+    prop.type = r.uint8()
+    prop.flags = r.uint8()
+    prop.value = _read_property_value(r, prop.type, obj_format)
+    return prop
 
 
 def _write_property_value(w: _Writer, prop_type: int, value: Any,
@@ -409,6 +446,29 @@ def _write_property_value(w: _Writer, prop_type: int, value: Any,
         w.uint32(len(value))
         for v in value:
             w.uint8(1 if v else 0)
+    elif prop_type == PROP_VARIABLE:
+        pass                              # wbNull
+    elif prop_type == PROP_STRUCT:
+        _write_struct(w, value, obj_format)
+    elif prop_type == PROP_VARIABLE_ARRAY:
+        w.uint32(value)                   # the lone count read back
+    elif prop_type == PROP_STRUCT_ARRAY:
+        w.uint32(len(value))
+        for members in value:
+            _write_struct(w, members, obj_format)
+
+
+def _write_struct(w: _Writer, members: list, obj_format: int):
+    w.uint32(len(members))
+    for m in members:
+        _write_property(w, m, obj_format)
+
+
+def _write_property(w: _Writer, prop: 'VmadProperty', obj_format: int):
+    w.wstring(prop.name)
+    w.uint8(prop.type)
+    w.uint8(prop.flags)
+    _write_property_value(w, prop.type, prop.value, obj_format)
 
 
 def _read_script(r: _Reader, obj_format: int) -> VmadScript:
@@ -417,12 +477,7 @@ def _read_script(r: _Reader, obj_format: int) -> VmadScript:
     script.flags = r.uint8()
     prop_count = r.uint16()
     for _ in range(prop_count):
-        prop = VmadProperty()
-        prop.name = r.wstring()
-        prop.type = r.uint8()
-        prop.flags = r.uint8()
-        prop.value = _read_property_value(r, prop.type, obj_format)
-        script.properties.append(prop)
+        script.properties.append(_read_property(r, obj_format))
     return script
 
 
@@ -431,10 +486,7 @@ def _write_script(w: _Writer, script: VmadScript, obj_format: int):
     w.uint8(script.flags)
     w.uint16(len(script.properties))
     for prop in script.properties:
-        w.wstring(prop.name)
-        w.uint8(prop.type)
-        w.uint8(prop.flags)
-        _write_property_value(w, prop.type, prop.value, obj_format)
+        _write_property(w, prop, obj_format)
 
 
 # ---- Fragment reading/writing ----

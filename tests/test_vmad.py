@@ -242,3 +242,78 @@ class TestVmadNoneProperty:
         vmad = VmadData.parse(data)
         assert vmad.scripts[0].properties[0].value is None
         assert vmad.to_bytes() == data
+
+
+class TestVmadFO4StructProperties:
+    """FO4 adds Struct (7) and Array of Struct (17) — nested members that can
+    hold Object FormIDs. Verify byte-perfect round-trip + recursive remap."""
+
+    @staticmethod
+    def _obj_bytes(form_id, alias=-1, unused=0):
+        # obj_format 2: unused(u16), alias(s16), formid(u32)
+        return struct.pack('<HhI', unused, alias, form_id)
+
+    @classmethod
+    def _struct_bytes(cls, members):
+        # u32 member count, then each member: name, type, flags, value bytes
+        w = _Writer()
+        w.uint32(len(members))
+        for name, mtype, mflags, vbytes in members:
+            w.wstring(name)
+            w.uint8(mtype)
+            w.uint8(mflags)
+            w._parts.append(vbytes)
+        return w.get_bytes()
+
+    def test_struct_property_roundtrip_and_remap(self):
+        from esplib.vmad import PROP_STRUCT
+        struct_val = self._struct_bytes([
+            ('Ref', PROP_OBJECT, 1, self._obj_bytes(0x00012345, alias=3)),
+            ('Count', PROP_INT32, 1, struct.pack('<i', 7)),
+        ])
+        data = _build_simple_vmad([
+            ('FragScript', [('MyStruct', PROP_STRUCT, 1, struct_val)])
+        ], version=6)
+        vmad = VmadData.parse(data)
+        members = vmad.scripts[0].properties[0].value
+        assert [m.name for m in members] == ['Ref', 'Count']
+        assert members[0].value.form_id == 0x00012345
+        assert members[1].value == 7
+        assert vmad.to_bytes() == data           # byte-perfect
+
+        vmad.remap_form_ids(lambda f: f + 0x01000000)   # bump master index
+        assert members[0].value.form_id == 0x01012345
+        # survives a round-trip
+        assert VmadData.parse(vmad.to_bytes()).scripts[0].properties[0] \
+            .value[0].value.form_id == 0x01012345
+
+    def test_array_of_struct_roundtrip_and_remap(self):
+        from esplib.vmad import PROP_STRUCT_ARRAY
+        s0 = self._struct_bytes([('A', PROP_OBJECT, 1, self._obj_bytes(0x0A))])
+        s1 = self._struct_bytes([('A', PROP_OBJECT, 1, self._obj_bytes(0x0B))])
+        w = _Writer()
+        w.uint32(2)            # array of 2 structs
+        w._parts.append(s0)
+        w._parts.append(s1)
+        data = _build_simple_vmad([
+            ('S', [('Arr', PROP_STRUCT_ARRAY, 1, w.get_bytes())])
+        ], version=6)
+        vmad = VmadData.parse(data)
+        arr = vmad.scripts[0].properties[0].value
+        assert [s[0].value.form_id for s in arr] == [0x0A, 0x0B]
+        assert vmad.to_bytes() == data
+
+        seen = []
+        vmad.remap_form_ids(lambda f: seen.append(f) or (f | 0x05000000))
+        assert seen == [0x0A, 0x0B]              # walked both nested objects
+        assert VmadData.parse(vmad.to_bytes()).scripts[0].properties[0] \
+            .value[1][0].value.form_id == 0x0500000B
+
+    def test_variable_property_has_no_value(self):
+        from esplib.vmad import PROP_VARIABLE
+        data = _build_simple_vmad([
+            ('S', [('V', PROP_VARIABLE, 1, b'')])
+        ], version=6)
+        vmad = VmadData.parse(data)
+        assert vmad.scripts[0].properties[0].value is None
+        assert vmad.to_bytes() == data
