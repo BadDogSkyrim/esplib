@@ -89,3 +89,33 @@ def glob_copy_as(record: Record, new_editor_id: str,
     new.form_id = FormID(new_form_id) if isinstance(new_form_id, int) else new_form_id
     new.editor_id = new_editor_id
     return new
+
+
+# ---------------------------------------------------------------------------
+# Race (RACE) helpers
+# ---------------------------------------------------------------------------
+
+def race_height(record: Record, female: bool = False) -> float:
+    """Read a RACE record's height multiplier (Fallout 4).
+
+    FO4 RACE ``DATA`` begins with two float32s -- male height (offset 0) and
+    female height (offset 4). The rest of DATA is a large, version-dependent
+    struct that esplib keeps opaque, so this reads just the two leading floats.
+
+    The Creation Kit scales an actor's baked FaceGen skeleton by this factor, so
+    facegen tools need it to place nif-local bones (e.g. cloth-physics hair bones
+    that aren't in the actor skeleton) in the scaled actor frame.
+
+    Only FO4's layout is supported -- Skyrim stores height elsewhere in DATA --
+    so this returns 1.0 for a non-FO4 record (or when DATA is absent/too short).
+    """
+    if record is None:
+        return 1.0
+    plugin = record.plugin
+    registry = getattr(plugin, '_game_registry', None) if plugin else None
+    if registry is not None and getattr(registry, 'game_id', None) != 'fo4':
+        return 1.0
+    data = record.get_subrecord('DATA')
+    if data is None or data.size < 8:
+        return 1.0
+    return data.get_float(4 if female else 0)

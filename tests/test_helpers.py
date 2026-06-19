@@ -8,6 +8,7 @@ from esplib import (
     Plugin, Record, SubRecord, FormID,
     flst_forms, flst_contains, flst_add, flst_remove,
     glob_value, glob_set_value, glob_copy_as,
+    race_height,
 )
 from tests.conftest import make_subrecord, make_simple_plugin
 
@@ -169,3 +170,40 @@ class TestPluginGlobalVariableHelpers:
         loaded_glob = loaded.get_record_by_editor_id('TestGlobal')
         assert loaded_glob is not None
         assert glob_value(loaded_glob) == pytest.approx(123.456, rel=1e-5)
+
+
+class TestRaceHeight:
+    """FO4 RACE height accessor (DATA floats at offset 0 male / 4 female)."""
+
+
+    def _make_race(self, male=1.0, female=1.0, trailing=40):
+        record = Record('RACE', FormID(0x100), 0)
+        record.add_subrecord('EDID', b'TestRace\x00')
+        # DATA: two leading f32 heights then the opaque version-dependent rest.
+        record.add_subrecord('DATA',
+                             struct.pack('<ff', male, female) + b'\x00' * trailing)
+        return record
+
+
+    def test_reads_male_and_female(self):
+        race = self._make_race(male=1.0, female=0.98)
+        assert race_height(race, female=False) == pytest.approx(1.0)
+        assert race_height(race, female=True) == pytest.approx(0.98)
+
+
+    def test_missing_data_defaults_to_one(self):
+        race = Record('RACE', FormID(0x100), 0)
+        race.add_subrecord('EDID', b'NoData\x00')
+        assert race_height(race) == 1.0
+
+
+    def test_short_data_defaults_to_one(self):
+        race = self._make_race(trailing=0)  # 8 bytes is enough...
+        assert race_height(race, female=True) == pytest.approx(1.0)
+        short = Record('RACE', FormID(0x100), 0)
+        short.add_subrecord('DATA', struct.pack('<f', 1.0))  # only 4 bytes
+        assert race_height(short, female=True) == 1.0
+
+
+    def test_none_record_defaults_to_one(self):
+        assert race_height(None) == 1.0

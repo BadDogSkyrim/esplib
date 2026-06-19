@@ -14,6 +14,7 @@ from .exceptions import PluginError, ParseError, ValidationError, FormIDError
 from .helpers import (
     flst_forms, flst_contains, flst_add, flst_remove,
     glob_value, glob_set_value, glob_copy_as,
+    race_height,
 )
 from .vmad import VmadData, VmadScript, VmadProperty, VmadObject
 from .bsa import BsaReader
@@ -31,6 +32,7 @@ __all__ = [
     "PluginError", "ParseError", "ValidationError", "FormIDError",
     "flst_forms", "flst_contains", "flst_add", "flst_remove",
     "glob_value", "glob_set_value", "glob_copy_as",
+    "race_height",
     "VmadData", "VmadScript", "VmadProperty", "VmadObject",
     "BsaReader", "Ba2Reader",
 ]

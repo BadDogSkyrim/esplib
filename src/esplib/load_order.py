@@ -30,9 +30,13 @@ class LoadOrder:
     }
 
     def __init__(self, plugins: List[str], data_dir: Optional[Path] = None,
-                 game_id: str = ''):
+                 game_id: str = '', fallback_dir: Optional[Path] = None):
         self.plugins = plugins
         self.data_dir = data_dir
+        # Optional second dir searched when a plugin isn't in data_dir — lets a
+        # caller point data_dir at an override (a mod or test fixtures) while
+        # still finding the base game/DLC plugins in the real Data folder.
+        self.fallback_dir = fallback_dir
         self.game_id = game_id
 
     @classmethod
@@ -64,11 +68,13 @@ class LoadOrder:
     @classmethod
     def from_list(cls, plugin_names: List[str],
                   data_dir: Union[str, Path, None] = None,
-                  game_id: str = '') -> 'LoadOrder':
+                  game_id: str = '',
+                  fallback_dir: Union[str, Path, None] = None) -> 'LoadOrder':
         """Create a load order from an explicit list of plugin filenames."""
         data_path = Path(data_dir) if data_dir else None
+        fb_path = Path(fallback_dir) if fallback_dir else None
         return cls(plugins=list(plugin_names), data_dir=data_path,
-                   game_id=game_id)
+                   game_id=game_id, fallback_dir=fb_path)
 
     @classmethod
     def _parse_plugins_txt(cls, path: Path, game_id: str,
@@ -130,11 +136,12 @@ class LoadOrder:
         return plugins
 
     def plugin_path(self, name: str) -> Optional[Path]:
-        """Get the full path to a plugin file."""
-        if self.data_dir:
-            p = self.data_dir / name
-            if p.exists():
-                return p
+        """Get the full path to a plugin file (data_dir first, then fallback)."""
+        for root in (self.data_dir, self.fallback_dir):
+            if root:
+                p = root / name
+                if p.exists():
+                    return p
         return None
 
     def index_of(self, name: str) -> int:
