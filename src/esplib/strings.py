@@ -64,6 +64,10 @@ class StringTable:
     def set(self, string_id: int, value: str) -> None:
         self.strings[string_id] = value
 
+    def allocate_id(self) -> int:
+        """Return a fresh string ID (max existing + 1, starting at 1)."""
+        return (max(self.strings.keys()) + 1) if self.strings else 1
+
     def remove(self, string_id: int) -> bool:
         if string_id in self.strings:
             del self.strings[string_id]

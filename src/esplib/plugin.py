@@ -397,6 +397,200 @@ class Plugin:
 
         self.modified = True
 
+    def clone_for_override(self, source_record: Record,
+                           source_plugin: 'Plugin') -> Record:
+        """Clone a record from another plugin in preparation for an override.
+
+        Deep-copies the source record and remaps master indices in
+        subrecord FormIDs (NAME, XTEL, KWDA, VMAD, etc.) from the source
+        plugin's master ordering to ours. The record's own FormID is
+        left in source-plugin space — add_record_override remaps it
+        after using it to find the source group hierarchy.
+
+        Does NOT add the cloned record to the plugin — the caller is
+        expected to do any further setup (e.g. attaching XLOC via
+        write_form_id) and then call add_record_override(clone,
+        source_plugin) to place it in the right group hierarchy.
+        """
+        new_record = source_record.copy()
+        self._remap_subrecord_formids(new_record, source_plugin)
+        return new_record
+
+    def add_record_override(self, record: Record,
+                            source_plugin: 'Plugin') -> None:
+        """Add an override record, placing it in the same group hierarchy
+        as the source record in the source plugin.
+
+        This is essential for REFR, ACHR, and other placed records that
+        must be inside the correct cell/worldspace group structure.
+        Falls back to flat add_record if the source group path can't
+        be found.
+        """
+        # Find the group path to this record in the source plugin.
+        # Path lookup uses the source-plugin FormID; remap to our master
+        # ordering happens after the lookup so callers don't have to
+        # juggle two FormIDs.
+        path = self._find_group_path(source_plugin.groups,
+                                     record.form_id.value)
+        if not path:
+            # Fallback: use flat grouping
+            self.add_record(record)
+            return
+
+        # Remap the record's own FormID from the source's master ordering
+        # to ours (e.g. Dawnguard.esm at index 0 in source -> index 1
+        # here). Subrecord FormIDs are remapped separately by
+        # clone_for_override before this call.
+        if record.form_id.value != 0:
+            remapped = self.remap_formid(record.form_id.value, source_plugin)
+            if remapped != record.form_id.value:
+                record.form_id = FormID(remapped)
+
+        # Register in indexes (same as add_record)
+        if record.form_id.value == 0:
+            record.form_id = self.get_next_form_id()
+        if record.form_id.file_index == self._LOCAL_SENTINEL:
+            self._new_records.append(record)
+        if self._game_registry:
+            if record.version == 44:
+                record.version = self._RECORD_VERSIONS.get(
+                    self._game_registry.game_id, 44)
+            if record.schema is None:
+                schema = self._game_registry.get(record.signature)
+                if schema is not None:
+                    record.bind_schema(schema)
+        self.records.append(record)
+        self._form_id_index[record.form_id.value] = record
+        if record.editor_id:
+            self._editor_id_index[record.editor_id.lower()] = record
+        if record.signature not in self._signature_index:
+            self._signature_index[record.signature] = []
+        self._signature_index[record.signature].append(record)
+
+        # Walk/create the group hierarchy, adding parent records as needed
+        # (e.g., WRLD and CELL records that the engine requires alongside
+        # their child groups)
+        current_groups = self.groups
+        for step in path:
+            group_type = step['group_type']
+            label = step['label']
+            parent_record = step.get('parent_record')
+
+            target = None
+            for g in current_groups:
+                if isinstance(g, GroupRecord) and \
+                   g.group_type == group_type and g.label == label:
+                    target = g
+                    break
+
+            if target is None:
+                # Add parent record (WRLD, CELL) before its child group
+                # if one exists and hasn't been added yet
+                if parent_record is not None:
+                    pr_fid = parent_record.form_id.value
+                    already_added = any(
+                        hasattr(r, 'form_id') and r.form_id.value == pr_fid
+                        for r in current_groups)
+                    if not already_added:
+                        pr_copy = parent_record.copy()
+                        # Remap subrecord FormIDs on the cloned parent
+                        # (LTMP, XLCN, XEZN, XCMO, XCAS, XCCM, XCIM,
+                        # XCWT, XOWN on CELLs; WNAM/SNAM/ZNAM etc. on
+                        # WRLDs). Without this, any FormID subrecord
+                        # with a master index pointing at the source's
+                        # self-index carries that raw index through to
+                        # the destination, where it now aliases a
+                        # different master. The engine half-loads the
+                        # cell (skybox only) at runtime because e.g.
+                        # its LTMP resolves against the wrong plugin.
+                        if source_plugin is not None:
+                            self._remap_subrecord_formids(
+                                pr_copy, source_plugin)
+                        # Translate cloned parent record's localized
+                        # subrecords (e.g. CELL.FULL). Without this, a
+                        # cloned parent CELL from a localized source
+                        # plugin (Skyrim.esm) carries a 4-byte string
+                        # ID that's meaningless in our destination,
+                        # corrupting the engine's name-resolution
+                        # cascade (door activation prompts, etc.).
+                        #
+                        # Branch on destination localization:
+                        # - non-localized: delocalize -> inline text
+                        #   (mirrors copy_record's delocalize step)
+                        # - localized: re-localize -> new local
+                        #   string ID + entry in our own string table
+                        if source_plugin is not None:
+                            if not self.is_localized:
+                                ps = source_plugin.plugin_set
+                                orig_norm = None
+                                if ps is not None:
+                                    orig_norm = source_plugin.normalize_form_id(
+                                        parent_record.form_id)
+                                self._delocalize_strings(
+                                    pr_copy, source_plugin, ps,
+                                    chain_form_id=orig_norm)
+                            else:
+                                self._localize_strings(pr_copy, source_plugin)
+                        # Also remap its own FormID from the source's
+                        # master ordering to ours (same treatment the
+                        # override record itself receives below).
+                        remapped_pr_fid = self.remap_formid(
+                            pr_copy.form_id.value, source_plugin)
+                        if remapped_pr_fid != pr_copy.form_id.value:
+                            pr_copy.form_id = FormID(remapped_pr_fid)
+                        current_groups.append(pr_copy)
+
+                target = GroupRecord(group_type, label)
+                if current_groups is self.groups:
+                    self.groups.append(target)
+                else:
+                    current_groups.append(target)
+            current_groups = target.records
+
+        # Place the record in the deepest group
+        current_groups.append(record)
+        self.modified = True
+
+    @staticmethod
+    def _find_group_path(groups, target_form_id,
+                         _path=None) -> list:
+        """Find the group hierarchy path to a record by FormID.
+
+        Returns a list of dicts:
+          {'group_type': int, 'label': ..., 'parent_record': Record|None}
+        The parent_record is a non-group record that immediately precedes
+        a child group at the same level (e.g., WRLD before type-1 groups,
+        CELL before type-6/8/9 groups). These must be included in override
+        plugins for the engine to correctly process the group.
+        """
+        if _path is None:
+            _path = []
+        # Track non-group records at this level that may be parents
+        last_record = None
+        for g in groups:
+            if not isinstance(g, GroupRecord):
+                if hasattr(g, 'form_id'):
+                    if g.form_id.value == target_form_id:
+                        return _path  # found the target
+                    last_record = g
+                continue
+            # For child groups (type 1,6,8,9), the preceding record
+            # at this level is the parent (WRLD, CELL)
+            parent_rec = None
+            if g.group_type in (1, 6, 8, 9):
+                parent_rec = last_record
+
+            new_path = _path + [{
+                'group_type': g.group_type,
+                'label': g.label,
+                'parent_record': parent_rec,
+            }]
+            result = Plugin._find_group_path(
+                g.records, target_form_id, new_path)
+            if result is not None and len(result) >= len(new_path):
+                return result
+        return []
+
     def remove_record(self, record: Record) -> bool:
         with self._lock:
             if record not in self.records:
@@ -642,6 +836,19 @@ class Plugin:
     # Subrecord signatures that contain localized string IDs
     _LOCALIZED_STRING_SIGS = {'FULL', 'SHRT', 'DESC', 'NNAM', 'ITXT'}
 
+    # Maps a localized subrecord signature to which of the three string
+    # tables it lives in. Verified against vanilla Skyrim.esm. Note that
+    # MESG ITXT lives in .STRINGS (not .ILSTRINGS, despite what the
+    # extension suggests). .ILSTRINGS is almost exclusively used for
+    # INFO RNAM (dialogue responses).
+    _LOCALIZED_STRING_TABLE_TYPE = {
+        'FULL': 'strings',
+        'SHRT': 'strings',
+        'ITXT': 'strings',
+        'DESC': 'dlstrings',
+        'NNAM': 'dlstrings',
+    }
+
     # Fallback set for records without a schema.
     _FORMID_SUBRECORD_SIGS_FALLBACK = frozenset({
         'LNAM', 'KWDA', 'RNAM', 'PNAM', 'DOFT', 'FTST', 'TPLT',
@@ -650,6 +857,14 @@ class Plugin:
         'DFTF', 'MPAI', 'TIND', 'TINC', 'HEAD', 'NAM8', 'MODL',
         'EITM', 'BAMT', 'BIDS', 'ETYP', 'NAM4', 'NAM5', 'YNAM',
         'CRDT', 'EFID', 'ATKR', 'HCLF', 'DPLT', 'SOFT',
+        # CELL subrecord FormIDs (all 4-byte single refs). Without
+        # these, cloning a parent CELL for REFR override leaves its
+        # lighting/location/zone/music/acoustic/climate/image-space/
+        # water references pointing at wrong master indices after
+        # master-list reordering, which causes the engine to half-
+        # load the cell (skybox only) at runtime.
+        'LTMP', 'XLCN', 'XEZN', 'XCMO', 'XCAS', 'XCCM', 'XCIM',
+        'XCWT', 'XOWN',
     })
 
     def copy_record(self, record: 'Record',
@@ -942,6 +1157,59 @@ class Plugin:
                         string_id, record.editor_id, sr.signature)
                     sr.data = bytearray(b'\x00')
                     sr.modified = True
+
+    def _localize_strings(self, record: 'Record',
+                          source: Optional['Plugin']) -> None:
+        """Convert source-plugin string IDs to fresh local string IDs.
+
+        Inverse of _delocalize_strings. Used when copying records from a
+        localized source plugin into a localized destination plugin: the
+        source's 4-byte string IDs are meaningless in our string table,
+        so we resolve each one to text via the source's strings table,
+        allocate a new ID in our own table, and write the new ID into
+        the subrecord.
+
+        Requires self.is_localized == True. Lazy-initializes
+        self.string_tables if not already set up.
+        """
+        from .strings import StringTable, StringTableManager
+        if source is None or not source.is_localized:
+            return
+        if self.string_tables is None:
+            self.string_tables = StringTableManager()
+        mgr = self.string_tables
+
+        for sr in record.subrecords:
+            if sr.signature not in self._LOCALIZED_STRING_SIGS:
+                continue
+            if sr.size != 4:
+                continue
+            src_sid = sr.get_uint32()
+            if src_sid == 0:
+                continue
+            text = source.resolve_string(src_sid)
+            if text is None:
+                continue
+            text = text.rstrip('\x00')
+
+            # Pick the destination table for this signature
+            attr = self._LOCALIZED_STRING_TABLE_TYPE.get(sr.signature)
+            if attr is None:
+                continue
+            table = getattr(mgr, attr)
+            if table is None:
+                ttype = {
+                    'strings': StringTable.STRINGS,
+                    'dlstrings': StringTable.DLSTRINGS,
+                    'ilstrings': StringTable.ILSTRINGS,
+                }[attr]
+                table = StringTable(ttype)
+                setattr(mgr, attr, table)
+
+            new_sid = table.allocate_id()
+            table.set(new_sid, text)
+            sr.data = bytearray(struct.pack('<I', new_sid))
+            sr.modified = True
 
     # Sentinel file index for new local records. Using 0xFF avoids
     # collisions with master indices (which grow from 0). The real
